@@ -1,6 +1,12 @@
 use tokio;
 use tokio::sync::mpsc;
 
+use async_trait::async_trait;
+
+// use std::future::Future;
+
+type ErrorBox = Box<dyn std::error::Error>;
+
 // #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 // enum ActorStatus {
 //     Running,
@@ -58,22 +64,63 @@ use tokio::sync::mpsc;
 //     Ok(())
 // }
 
+#[async_trait]
+trait MessageHandler<T>: Send + 'static
+where
+    T: Send + 'static,
+{
+    async fn on_message(&mut self, msg: T) -> Result<(), ErrorBox>;
+}
+
+struct PingActor {
+    subject: Option<mpsc::Sender<PingMessage>>,
+}
+
+#[async_trait]
+impl MessageHandler<PingMessage> for PingActor {
+    async fn on_message(&mut self, msg: PingMessage) -> Result<(), ErrorBox> {
+        match msg {
+            PingMessage::Setup(subj) => {
+                self.subject = Some(subj);
+            }
+            PingMessage::Ping => {
+                if let Some(ref mut subj) = self.subject {
+                    subj.send(PingMessage::Pong).await?;
+                }
+            }
+            PingMessage::Pong => {
+                println!("Pong!");
+                if let Some(ref mut subj) = self.subject {
+                    subj.send(PingMessage::Ping).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 enum SystemMessage {
-    Shutdown
+    Shutdown,
 }
 
 #[derive(Debug)]
 enum PingMessage {
     Setup(mpsc::Sender<PingMessage>),
     Ping,
-    Pong
+    Pong,
 }
 
-
-fn ping_actor(mut rs: mpsc::Receiver<SystemMessage>, mut rp: mpsc::Receiver<PingMessage>) -> tokio::task::JoinHandle<()> {
+fn message_actor<T, M>(
+    mut actor: M,
+    mut rs: mpsc::Receiver<SystemMessage>,
+    mut rp: mpsc::Receiver<T>,
+) -> tokio::task::JoinHandle<()>
+where
+    M: MessageHandler<T> + Send + 'static,
+    T: Send + 'static,
+{
     tokio::spawn(async move {
-        let mut subject = None;
         'outer: loop {
             tokio::select! {
                 sys_msg = rs.recv() => {
@@ -81,41 +128,63 @@ fn ping_actor(mut rs: mpsc::Receiver<SystemMessage>, mut rp: mpsc::Receiver<Ping
                         break 'outer;
                     }
                 },
-                ping_msg = rp.recv() => {
-                    if let Some(ping_msg) = ping_msg {
-                        match ping_msg {
-                            PingMessage::Setup(subj) => {
-                                subject = Some(subj);
-                            },
-                            PingMessage::Ping => {
-                                if let Some(ref mut subj) = subject {
-                                    subj.send(PingMessage::Pong).await.unwrap();
-                                }
-                            },
-                            PingMessage::Pong => {
-                                println!("Pong!");
-                                if let Some(ref mut subj) = subject {
-                                    subj.send(PingMessage::Ping).await.unwrap();
-                                }
-                            }
-                        }
-                    }
+                ping_msg = rp.recv() => if let Some(msg) = ping_msg {
+
+                    actor.on_message(msg).await.unwrap()
                 }
             }
         }
     })
 }
 
+// fn ping_actor(
+//     mut rs: mpsc::Receiver<SystemMessage>,
+//     mut rp: mpsc::Receiver<PingMessage>,
+// ) -> tokio::task::JoinHandle<()> {
+//     tokio::spawn(async move {
+//         let mut subject = None;
+//         'outer: loop {
+//             tokio::select! {
+//                 sys_msg = rs.recv() => {
+//                     if let Some(SystemMessage::Shutdown) = sys_msg {
+//                         break 'outer;
+//                     }
+//                 },
+//                 ping_msg = rp.recv() => {
+//                     if let Some(ping_msg) = ping_msg {
+//                         match ping_msg {
+//                             PingMessage::Setup(subj) => {
+//                                 subject = Some(subj);
+//                             },
+//                             PingMessage::Ping => {
+//                                 if let Some(ref mut subj) = subject {
+//                                     subj.send(PingMessage::Pong).await.unwrap();
+//                                 }
+//                             },
+//                             PingMessage::Pong => {
+//                                 println!("Pong!");
+//                                 if let Some(ref mut subj) = subject {
+//                                     subj.send(PingMessage::Ping).await.unwrap();
+//                                 }
+//                             }
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     })
+// }
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         let (ts0, rs0) = mpsc::channel::<SystemMessage>(512);
         let (tp0, rp0) = mpsc::channel::<PingMessage>(512);
-        let h0 = ping_actor(rs0, rp0);
+        let h0 = message_actor(PingActor { subject: None }, rs0, rp0);
 
         let (ts1, rs1) = mpsc::channel::<SystemMessage>(512);
         let (tp1, rp1) = mpsc::channel::<PingMessage>(512);
-        let h1 = ping_actor(rs1, rp1);
+        let h1 = message_actor(PingActor { subject: None }, rs1, rp1);
 
         // Pings
         tp0.send(PingMessage::Setup(tp1.clone())).await?;
