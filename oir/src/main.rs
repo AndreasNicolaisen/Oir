@@ -100,8 +100,16 @@ impl MessageHandler<PingMessage> for PingActor {
 }
 
 #[derive(Debug)]
+enum ShutdownReason {
+    Shutdown,
+    Crashed,
+}
+
+#[derive(Debug)]
 enum SystemMessage {
     Shutdown,
+    Stopped(ShutdownReason),
+    Link(mpsc::Sender<SystemMessage>),
 }
 
 #[derive(Debug)]
@@ -121,18 +129,33 @@ where
     T: Send + 'static,
 {
     tokio::spawn(async move {
+        let mut parent = None;
+        let reason;
         'outer: loop {
             tokio::select! {
                 sys_msg = rs.recv() => {
-                    if let Some(SystemMessage::Shutdown) = sys_msg {
-                        break 'outer;
+                    match sys_msg {
+                        Some(SystemMessage::Shutdown) => {
+                            reason = ShutdownReason::Shutdown;
+                            break 'outer;
+                        },
+                        Some(SystemMessage::Link(sender)) => {
+                            parent = Some(sender);
+                        },
+                        _ => {}
                     }
                 },
                 ping_msg = rp.recv() => if let Some(msg) = ping_msg {
-
-                    actor.on_message(msg).await.unwrap()
+                    if actor.on_message(msg).await.is_err() {
+                        reason = ShutdownReason::Crashed;
+                        break 'outer;
+                    }
                 }
             }
+        }
+
+        if let Some(parent) = parent {
+            let _ = parent.send(SystemMessage::Stopped(reason)).await;
         }
     })
 }
