@@ -16,68 +16,6 @@ use crate::request_handler::Stactor;
 use tokio;
 use tokio::sync::mpsc;
 
-
-
-// use std::future::Future;
-
-// #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-// enum ActorStatus {
-//     Running,
-//     Stopped
-// }
-
-// trait Message: Send {}
-
-// struct Address;
-
-// trait Actor {
-//     type InMessage;
-//     type OutMessage;
-
-//     fn start(&mut self, parent: Option<Address>);
-
-//     fn status(&self) -> ActorStatus;
-
-//     fn on_message(&mut self, msg: Self::InMessage);
-
-//     fn shutdown(&mut self);
-// }
-
-// struct BasicActor {
-//     parent: Option<Address>
-// }
-
-// impl Actor for BasicActor {
-//     type InMessage = ();
-//     type OutMessage = ();
-
-//     fn start(&mut self, parent: Option<Address>) {
-//         self.parent = parent;
-//         println!("Ohoy!");
-//     }
-
-//     fn status(&self) -> ActorStatus {
-//         ActorStatus::Stopped
-//     }
-
-//     fn on_message(&mut self, msg: ()) {}
-
-//     fn shutdown(&mut self) {
-//     }
-// }
-
-// async fn spawn_actor<A: Actor>(act: A) -> tokio::Result<()> {
-//     tokio::spawn(move || {
-//         act.start(None);
-//         while act.status() == ActorStatus::Running {
-
-//         }
-//         act.shutdown();
-//     })?;
-//     Ok(())
-// }
-
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rt = tokio::runtime::Runtime::new()?;
     let _: Result<(), ErrorBox> = rt.block_on(async {
