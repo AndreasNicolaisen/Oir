@@ -62,6 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for h in vec.drain(..) {
             h.await?;
+            let _ = rsp.recv().await;
         }
 
         for i in 0..1024 {

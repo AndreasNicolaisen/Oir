@@ -26,7 +26,7 @@ where
     U: Send + 'static,
     M: RequestHandler<T, U> + Send + 'static,
 {
-    let (trh, rrh) = mpsc::channel::<U>(512);
+    let (trh, rrh) = mpsc::channel::<U>(1024);
     let handle = tokio::spawn(async move {
         let mut parent = None;
         let reason;
@@ -91,7 +91,6 @@ where
 {
     async fn on_request(&mut self, request: StoreRequest<K, V>) -> Result<Option<V>, ErrorBox> {
         use std::collections::hash_map::Entry;
-        println!("{:?}", request);
         match request {
             StoreRequest::Get(key) => Ok(self.store.get(&key).cloned()),
             StoreRequest::Set(key, value) => match self.store.entry(key) {
