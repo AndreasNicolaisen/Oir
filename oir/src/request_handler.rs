@@ -1,11 +1,21 @@
+use uuid::Uuid;
+
 use crate::actor::ErrorBox;
 use crate::actor::ShutdownReason;
 use crate::actor::SystemMessage;
 
 use tokio;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 use async_trait::async_trait;
+
+pub struct RequestId(Uuid);
+
+pub enum Response<T> {
+    Reply(T),
+    NoReply
+}
 
 #[async_trait]
 pub trait RequestHandler<T, U>: Send + 'static
@@ -13,21 +23,22 @@ where
     T: Send + 'static,
     U: Send + 'static,
 {
-    async fn on_request(&mut self, request: T) -> Result<U, ErrorBox>;
+    async fn on_request(&mut self, request_id: RequestId, request: T) -> Result<U, ErrorBox>;
 }
 
 pub fn request_actor<T, U, M>(
     mut actor: M,
     mut rs: mpsc::Receiver<SystemMessage>,
-    mut rp: mpsc::Receiver<T>,
-) -> (mpsc::Receiver<U>, tokio::task::JoinHandle<()>)
+    mut rp: mpsc::Receiver<(oneshot::Sender<U>, T)>,
+) -> tokio::task::JoinHandle<()>
 where
     T: Send + 'static,
     U: Send + 'static,
     M: RequestHandler<T, U> + Send + 'static,
 {
-    let (trh, rrh) = mpsc::channel::<U>(1024);
-    let handle = tokio::spawn(async move {
+    // late submissions channel here
+    // set of request_id that have not been replied to
+    tokio::spawn(async move {
         let mut parent = None;
         let reason;
         'outer: loop {
@@ -45,9 +56,10 @@ where
                     }
                 },
                 request_msg = rp.recv() => {
-                    if let Some(msg) = request_msg {
+                    if let Some((respond_sender, msg)) = request_msg {
                         let result;
-                        match actor.on_request(msg).await {
+                        let request_id = RequestId(Uuid::new_v4());
+                        match actor.on_request(request_id, msg).await {
                             Ok(r) => {
                                 result = r;
                             },
@@ -57,7 +69,7 @@ where
                             },
                         }
 
-                        if trh.send(result).await.is_err() {
+                        if respond_sender.send(result).is_err() {
                             reason = ShutdownReason::Crashed;
                             break 'outer;
                         }
@@ -69,8 +81,7 @@ where
         if let Some(parent) = parent {
             let _ = parent.send(SystemMessage::Stopped(reason)).await;
         }
-    });
-    (rrh, handle)
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,7 +100,7 @@ where
     K: Send + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
     V: Send + Clone + std::fmt::Debug + 'static,
 {
-    async fn on_request(&mut self, request: StoreRequest<K, V>) -> Result<Option<V>, ErrorBox> {
+    async fn on_request(&mut self, request_id: RequestId, request: StoreRequest<K, V>) -> Result<Option<V>, ErrorBox> {
         use std::collections::hash_map::Entry;
         match request {
             StoreRequest::Get(key) => Ok(self.store.get(&key).cloned()),

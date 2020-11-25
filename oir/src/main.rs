@@ -15,6 +15,7 @@ use crate::request_handler::Stactor;
 
 use tokio;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rt = tokio::runtime::Runtime::new()?;
@@ -42,8 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     rt.block_on(async {
         let (_ts0, rs0) = mpsc::channel::<SystemMessage>(512);
-        let (tp0, rp0) = mpsc::channel::<StoreRequest<i32, i32>>(1024);
-        let (mut rsp, _h0) = request_actor(
+        let (tp0, rp0) = mpsc::channel::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>(1024);
+        let _h0 = request_actor(
             Stactor {
                 store: std::collections::HashMap::new(),
             },
@@ -55,20 +56,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for i in 0..1024 {
             let tp0 = tp0.clone();
-            vec.push(tokio::spawn(async move {
-                let _ = tp0.send(StoreRequest::Set(i, i)).await;
-            }));
+            let (one_s, one_r) = oneshot::channel::<Option<i32>>();
+            vec.push((one_r, tokio::spawn(async move {
+                let _ = tp0.send((one_s, StoreRequest::Set(i, i))).await;
+            })));
         }
 
-        for h in vec.drain(..) {
+        for (r, h) in vec.drain(..) {
             h.await?;
-            let _ = rsp.recv().await;
+            let _result = r.await?;
         }
 
         for i in 0..1024 {
-            tp0.send(StoreRequest::Get(i)).await?;
-            let result = rsp.recv().await;
-            assert_eq!(Some(Some(i)), result);
+            let (one_s, one_r) = oneshot::channel::<Option<i32>>();
+            tp0.send((one_s, StoreRequest::Get(i))).await?;
+            let result = one_r.await?;
+            assert_eq!(Some(i), result);
         }
         Ok(())
     })

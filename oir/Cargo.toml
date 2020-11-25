@@ -10,3 +10,4 @@ edition = "2018"
 [dependencies]
 tokio = { version = "0.3", features = ["rt-multi-thread", "io-std", "time", "macros", "sync"] }
 async-trait = "0.1.41"
+uuid = { version = "0.8.1", features = ["v4"] }
