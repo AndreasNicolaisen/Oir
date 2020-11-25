@@ -6,12 +6,12 @@ mod message_handler;
 mod request_handler;
 
 use crate::message_handler::message_actor;
-use crate::message_handler::PingMessage;
 use crate::message_handler::PingActor;
+use crate::message_handler::PingMessage;
 
-use crate::request_handler::StoreRequest;
 use crate::request_handler::request_actor;
 use crate::request_handler::Stactor;
+use crate::request_handler::StoreRequest;
 
 use tokio;
 use tokio::sync::mpsc;
@@ -43,7 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     rt.block_on(async {
         let (_ts0, rs0) = mpsc::channel::<SystemMessage>(512);
-        let (tp0, rp0) = mpsc::channel::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>(1024);
+        let (tp0, rp0) =
+            mpsc::channel::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>(1024);
         let _h0 = request_actor(
             Stactor {
                 store: std::collections::HashMap::new(),
@@ -57,9 +58,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for i in 0..1024 {
             let tp0 = tp0.clone();
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();
-            vec.push((one_r, tokio::spawn(async move {
-                let _ = tp0.send((one_s, StoreRequest::Set(i, i))).await;
-            })));
+            vec.push((
+                one_r,
+                tokio::spawn(async move {
+                    let _ = tp0.send((one_s, StoreRequest::Set(i, i))).await;
+                }),
+            ));
         }
 
         for (r, h) in vec.drain(..) {
