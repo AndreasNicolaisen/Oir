@@ -214,4 +214,48 @@ mod tests {
 
         handle.await.unwrap();
     }
+
+    #[tokio::test]
+    async fn stactor_reduce_test() {
+        let mut tp = setup_stactor();
+
+        async fn req(tp: &mut mpsc::Sender<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>,
+                     r: StoreRequest<i32, i32>)
+                     -> Option<i32> {
+
+            let (one_s, one_r) = oneshot::channel::<Option<i32>>();
+            tp.send((one_s, r)).await.unwrap();
+            one_r.await.unwrap()
+        }
+
+        let INIT_SIZE = 16;
+        let mut hs = Vec::new();
+
+        let mut adder = |x, y, z, mut tp| {
+            hs.push(tokio::spawn(async move {
+                let a = req(&mut tp, StoreRequest::Get(x)).await.unwrap();
+                let b = req(&mut tp, StoreRequest::Get(y)).await.unwrap();
+                assert!(req(&mut tp, StoreRequest::Set(z, a + b)).await.is_none());
+            }));
+        };
+
+        //  0                            15  16             23 24     27 28 29 30
+        // [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1] [2 2 2 2 2 2 2 2] [4 4 4 4] [8 8] [16]
+        adder(28, 29, 30, tp.clone());
+        for i in 0..2 { adder(i * 2 + 24, i * 2 + 24 + 1, 28 + i, tp.clone()); }
+        for i in 0..4 { adder(i * 2 + 16, i * 2 + 16 + 1, 24 + i, tp.clone()); }
+        for i in 0..8 { adder(i * 2, i * 2 + 1, 16 + i, tp.clone()); }
+        // Suppliers
+        for i in 0..INIT_SIZE {
+            let mut tp = tp.clone();
+            if i < INIT_SIZE {
+                hs.push(tokio::spawn(async move {
+                    assert!(req(&mut tp, StoreRequest::Set(i, 1)).await.is_none());
+                }));
+            }
+        }
+
+        assert_eq!(Some(16), req(&mut tp, StoreRequest::Get(30)).await);
+        for h in hs.drain(..) { h.await.unwrap(); }
+    }
 }
