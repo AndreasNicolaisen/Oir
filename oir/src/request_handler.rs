@@ -27,7 +27,7 @@ where
 {
     async fn on_request(
         &mut self,
-        deferred_sender: mpsc::Sender<(RequestId, U)>,
+        deferred_sender: &mut mpsc::Sender<(RequestId, U)>,
         request_id: RequestId,
         request: T,
     ) -> Result<Response<U>, ErrorBox>;
@@ -47,7 +47,7 @@ where
         use Response::*;
         let mut parent = None;
         let mut pending = HashMap::new();
-        let (lss, mut lsr) = mpsc::channel::<(RequestId, U)>(512);
+        let (mut lss, mut lsr) = mpsc::channel::<(RequestId, U)>(512);
 
         let reason;
         'outer: loop {
@@ -68,7 +68,7 @@ where
                     if let Some((respond_sender, msg)) = request_msg {
                         let result;
                         let request_id = RequestId(Uuid::new_v4());
-                        match actor.on_request(lss.clone(), request_id, msg).await {
+                        match actor.on_request(&mut lss, request_id, msg).await {
                             Ok(Reply(r)) => {
                                 result = r;
 
@@ -114,32 +114,104 @@ pub enum StoreRequest<K, V> {
 }
 
 pub struct Stactor<K, V> {
-    pub store: std::collections::HashMap<K, V>,
+    store: std::collections::HashMap<K, V>,
+    pending: Vec<(RequestId, K)>,
+}
+
+impl<K, V> Stactor<K, V> {
+    pub fn new() -> Stactor<K, V> {
+        Stactor {
+            store: HashMap::new(),
+            pending: Vec::new(),
+        }
+    }
 }
 
 #[async_trait]
 impl<K, V> RequestHandler<StoreRequest<K, V>, Option<V>> for Stactor<K, V>
 where
-    K: Send + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
-    V: Send + Clone + std::fmt::Debug + 'static,
+    K: Send + Sync + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
+    V: Send + Sync + Clone + std::fmt::Debug + 'static,
 {
     async fn on_request(
         &mut self,
-        _deferred_sender: mpsc::Sender<(RequestId, Option<V>)>,
-        _request_id: RequestId,
+        deferred_sender: &mut mpsc::Sender<(RequestId, Option<V>)>,
+        request_id: RequestId,
         request: StoreRequest<K, V>,
     ) -> Result<Response<Option<V>>, ErrorBox> {
         use std::collections::hash_map::Entry;
         use Response::*;
         match request {
-            StoreRequest::Get(key) => Ok(Reply(self.store.get(&key).cloned())),
-            StoreRequest::Set(key, value) => match self.store.entry(key) {
+            StoreRequest::Get(key) => {
+                if let Some(v) = self.store.get(&key).cloned() {
+                    Ok(Reply(Some(v)))
+                } else {
+                    self.pending.push((request_id, key));
+                    Ok(NoReply)
+                }
+            }
+            StoreRequest::Set(key, value) => match self.store.entry(key.clone()) {
                 Entry::Occupied(mut e) => Ok(Reply(Some(e.insert(value)))),
                 Entry::Vacant(e) => {
+                    for (id, _) in self.pending.drain_filter(|&mut (id, ref k)| k == &key) {
+                        deferred_sender.send((id, Some(value.clone()))).await;
+                    }
                     e.insert(value);
                     Ok(Reply(None))
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_stactor() -> mpsc::Sender<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)> {
+        let (_ts0, rs0) = mpsc::channel::<SystemMessage>(512);
+        let (tp0, rp0) =
+            mpsc::channel::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>(1024);
+        let _h0 = request_actor(Stactor::new(), rs0, rp0);
+
+        tp0
+    }
+
+    #[tokio::test]
+    async fn stactor_simple_test() {
+        let tp = setup_stactor();
+
+        {
+            let (one_s, one_r) = oneshot::channel::<Option<i32>>();
+            tp.send((one_s, StoreRequest::Set(0, 0))).await.unwrap();
+
+            assert_eq!(Ok(None), one_r.await);
+        }
+
+        {
+            let (one_s, one_r) = oneshot::channel::<Option<i32>>();
+            tp.send((one_s, StoreRequest::Get(0))).await.unwrap();
+            assert_eq!(Ok(Some(0)), one_r.await);
+        }
+    }
+
+    #[tokio::test]
+    async fn stactor_deferred_response_test() {
+        let tp = setup_stactor();
+        let tp1 = tp.clone();
+
+        let handle = tokio::spawn(async move {
+            let (one_s, one_r) = oneshot::channel::<Option<i32>>();
+            tp1.send((one_s, StoreRequest::Get(0))).await.unwrap();
+            assert_eq!(Ok(Some(0)), one_r.await);
+        });
+
+        {
+            let (one_s, one_r) = oneshot::channel::<Option<i32>>();
+            tp.send((one_s, StoreRequest::Set(0, 0))).await.unwrap();
+            assert_eq!(Ok(None), one_r.await);
+        }
+
+        handle.await.unwrap();
     }
 }

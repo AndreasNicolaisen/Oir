@@ -1,3 +1,5 @@
+#![feature(drain_filter)]
+
 use crate::actor::ErrorBox;
 use crate::actor::SystemMessage;
 
@@ -45,13 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (_ts0, rs0) = mpsc::channel::<SystemMessage>(512);
         let (tp0, rp0) =
             mpsc::channel::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>(1024);
-        let _h0 = request_actor(
-            Stactor {
-                store: std::collections::HashMap::new(),
-            },
-            rs0,
-            rp0,
-        );
+        let _h0 = request_actor(Stactor::new(), rs0, rp0);
 
         let mut vec = Vec::new();
 
