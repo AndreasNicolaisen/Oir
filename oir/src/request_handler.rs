@@ -9,12 +9,14 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct RequestId(Uuid);
 
 pub enum Response<T> {
     Reply(T),
-    NoReply
+    NoReply,
 }
 
 #[async_trait]
@@ -23,7 +25,12 @@ where
     T: Send + 'static,
     U: Send + 'static,
 {
-    async fn on_request(&mut self, request_id: RequestId, request: T) -> Result<U, ErrorBox>;
+    async fn on_request(
+        &mut self,
+        deferred_sender: mpsc::Sender<(RequestId, U)>,
+        request_id: RequestId,
+        request: T,
+    ) -> Result<Response<U>, ErrorBox>;
 }
 
 pub fn request_actor<T, U, M>(
@@ -36,10 +43,12 @@ where
     U: Send + 'static,
     M: RequestHandler<T, U> + Send + 'static,
 {
-    // late submissions channel here
-    // set of request_id that have not been replied to
     tokio::spawn(async move {
+        use Response::*;
         let mut parent = None;
+        let mut pending = HashMap::new();
+        let (lss, mut lsr) = mpsc::channel::<(RequestId, U)>(512);
+
         let reason;
         'outer: loop {
             tokio::select! {
@@ -59,17 +68,31 @@ where
                     if let Some((respond_sender, msg)) = request_msg {
                         let result;
                         let request_id = RequestId(Uuid::new_v4());
-                        match actor.on_request(request_id, msg).await {
-                            Ok(r) => {
+                        match actor.on_request(lss.clone(), request_id, msg).await {
+                            Ok(Reply(r)) => {
                                 result = r;
+
+                                if respond_sender.send(result).is_err() {
+                                    reason = ShutdownReason::Crashed;
+                                    break 'outer;
+                                }
                             },
+                            Ok(NoReply) => {
+                                pending.insert(request_id, respond_sender);
+                            }
                             Err(_err) => {
                                 reason = ShutdownReason::Crashed;
                                 break 'outer;
                             },
                         }
-
-                        if respond_sender.send(result).is_err() {
+                    }
+                }
+                late_response_msg = lsr.recv() => {
+                    if let Some((request_id, result)) = late_response_msg {
+                        if let None = pending
+                            .remove(&request_id)
+                            .and_then(|reply_sender| reply_sender.send(result).ok())
+                        {
                             reason = ShutdownReason::Crashed;
                             break 'outer;
                         }
@@ -100,15 +123,21 @@ where
     K: Send + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
     V: Send + Clone + std::fmt::Debug + 'static,
 {
-    async fn on_request(&mut self, request_id: RequestId, request: StoreRequest<K, V>) -> Result<Option<V>, ErrorBox> {
+    async fn on_request(
+        &mut self,
+        _deferred_sender: mpsc::Sender<(RequestId, Option<V>)>,
+        _request_id: RequestId,
+        request: StoreRequest<K, V>,
+    ) -> Result<Response<Option<V>>, ErrorBox> {
         use std::collections::hash_map::Entry;
+        use Response::*;
         match request {
-            StoreRequest::Get(key) => Ok(self.store.get(&key).cloned()),
+            StoreRequest::Get(key) => Ok(Reply(self.store.get(&key).cloned())),
             StoreRequest::Set(key, value) => match self.store.entry(key) {
-                Entry::Occupied(mut e) => Ok(Some(e.insert(value))),
+                Entry::Occupied(mut e) => Ok(Reply(Some(e.insert(value)))),
                 Entry::Vacant(e) => {
                     e.insert(value);
-                    Ok(None)
+                    Ok(Reply(None))
                 }
             },
         }
