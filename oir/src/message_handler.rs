@@ -85,7 +85,7 @@ where
         }
 
         if let Some(parent) = parent {
-            let _ = parent.send(SystemMessage::Stopped(reason)).await;
+            let _ = parent.send(reason).await;
         }
     })
 }

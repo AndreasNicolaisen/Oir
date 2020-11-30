@@ -102,7 +102,7 @@ where
         }
 
         if let Some(parent) = parent {
-            let _ = parent.send(SystemMessage::Stopped(reason)).await;
+            let _ = parent.send(reason).await;
         }
     })
 }
@@ -219,10 +219,10 @@ mod tests {
     async fn stactor_reduce_test() {
         let mut tp = setup_stactor();
 
-        async fn req(tp: &mut mpsc::Sender<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>,
-                     r: StoreRequest<i32, i32>)
-                     -> Option<i32> {
-
+        async fn req(
+            tp: &mut mpsc::Sender<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>,
+            r: StoreRequest<i32, i32>,
+        ) -> Option<i32> {
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();
             tp.send((one_s, r)).await.unwrap();
             one_r.await.unwrap()
@@ -242,9 +242,15 @@ mod tests {
         //  0                            15  16             23 24     27 28 29 30
         // [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1] [2 2 2 2 2 2 2 2] [4 4 4 4] [8 8] [16]
         adder(28, 29, 30, tp.clone());
-        for i in 0..2 { adder(i * 2 + 24, i * 2 + 24 + 1, 28 + i, tp.clone()); }
-        for i in 0..4 { adder(i * 2 + 16, i * 2 + 16 + 1, 24 + i, tp.clone()); }
-        for i in 0..8 { adder(i * 2, i * 2 + 1, 16 + i, tp.clone()); }
+        for i in 0..2 {
+            adder(i * 2 + 24, i * 2 + 24 + 1, 28 + i, tp.clone());
+        }
+        for i in 0..4 {
+            adder(i * 2 + 16, i * 2 + 16 + 1, 24 + i, tp.clone());
+        }
+        for i in 0..8 {
+            adder(i * 2, i * 2 + 1, 16 + i, tp.clone());
+        }
         // Suppliers
         for i in 0..INIT_SIZE {
             let mut tp = tp.clone();
@@ -256,6 +262,8 @@ mod tests {
         }
 
         assert_eq!(Some(16), req(&mut tp, StoreRequest::Get(30)).await);
-        for h in hs.drain(..) { h.await.unwrap(); }
+        for h in hs.drain(..) {
+            h.await.unwrap();
+        }
     }
 }

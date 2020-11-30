@@ -1,9 +1,13 @@
 #![feature(drain_filter)]
 
+#[macro_use]
+extern crate lazy_static;
+
 use crate::actor::ErrorBox;
 use crate::actor::SystemMessage;
 
 mod actor;
+mod mailbox;
 mod message_handler;
 mod request_handler;
 

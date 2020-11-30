@@ -13,5 +13,5 @@ pub enum ShutdownReason {
 pub enum SystemMessage {
     Shutdown,
     Stopped(ShutdownReason),
-    Link(mpsc::Sender<SystemMessage>),
+    Link(mpsc::Sender<ShutdownReason>),
 }
