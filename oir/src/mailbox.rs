@@ -32,8 +32,15 @@ where
     T: Send + Sync + 'static,
 {
     async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>>;
+
+    async fn send_system(&mut self, msg: SystemMessage) -> Result<(), MailboxSendError<SystemMessage>>;
+
+    async fn shutdown(&mut self) -> Result<(), MailboxSendError<SystemMessage>> {
+        self.send_system(SystemMessage::Shutdown).await
+    }
 }
 
+#[derive(Debug)]
 pub struct NamedMailbox<T> {
     senders: Option<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>)>,
     name: String,
@@ -73,7 +80,21 @@ where
     async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
         self.resolve()?;
 
-        let msg_sender = if let Some((_, ref x)) = self.senders {
+        let msg_s = if let Some((_, ref y)) = self.senders {
+            y
+        } else {
+            // self.resolve() will have returned an error, if senders couldn't be resolved,
+            // ie. they would have been None.
+            unreachable!()
+        };
+
+        Ok(msg_s.send(msg).await?)
+    }
+
+    async fn send_system(&mut self, msg: SystemMessage) -> Result<(), MailboxSendError<SystemMessage>> {
+        self.resolve()?;
+
+        let sys_s = if let Some((ref x, _)) = self.senders {
             x
         } else {
             // self.resolve() will have returned an error, if senders couldn't be resolved,
@@ -81,7 +102,7 @@ where
             unreachable!()
         };
 
-        Ok(msg_sender.send(msg).await?)
+        Ok(sys_s.send(msg).await?)
     }
 }
 
@@ -97,6 +118,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct UnnamedMailbox<T> {
     sys: mpsc::Sender<SystemMessage>,
     msg: mpsc::Sender<T>,
@@ -126,6 +148,10 @@ where
 {
     async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
         Ok(self.msg.send(msg).await?)
+    }
+
+    async fn send_system(&mut self, msg: SystemMessage) -> Result<(), MailboxSendError<SystemMessage>> {
+        Ok(self.sys.send(msg).await?)
     }
 }
 
