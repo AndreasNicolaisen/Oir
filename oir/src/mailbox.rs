@@ -1,7 +1,7 @@
-use std::fmt;
-use std::error;
 use std::any::Any;
 use std::collections::HashMap;
+use std::error;
+use std::fmt;
 use std::sync::RwLock;
 
 use crate::actor::SystemMessage;
@@ -29,24 +29,17 @@ impl<T> From<mpsc::error::SendError<T>> for MailboxSendError<T> {
 }
 
 impl<T> fmt::Display for MailboxSendError<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result  {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use MailboxSendError::*;
         write!(f, "Failed to send message: ");
         match self {
-            ResolutionError(_) => {
-                write!(f, "could not resolve name")
-            }
-            SendError(_) => {
-                write!(f, "channel closed")
-            }
+            ResolutionError(_) => write!(f, "could not resolve name"),
+            SendError(_) => write!(f, "channel closed"),
         }
     }
 }
 
-impl<T> error::Error for MailboxSendError<T>
-where
-    T: fmt::Debug
-{}
+impl<T> error::Error for MailboxSendError<T> where T: fmt::Debug {}
 
 #[async_trait]
 pub trait Mailbox<T>
@@ -55,7 +48,10 @@ where
 {
     async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>>;
 
-    async fn send_system(&mut self, msg: SystemMessage) -> Result<(), MailboxSendError<SystemMessage>>;
+    async fn send_system(
+        &mut self,
+        msg: SystemMessage,
+    ) -> Result<(), MailboxSendError<SystemMessage>>;
 
     async fn shutdown(&mut self) -> Result<(), MailboxSendError<SystemMessage>> {
         self.send_system(SystemMessage::Shutdown).await
@@ -113,7 +109,10 @@ where
         Ok(msg_s.send(msg).await?)
     }
 
-    async fn send_system(&mut self, msg: SystemMessage) -> Result<(), MailboxSendError<SystemMessage>> {
+    async fn send_system(
+        &mut self,
+        msg: SystemMessage,
+    ) -> Result<(), MailboxSendError<SystemMessage>> {
         self.resolve()?;
 
         let sys_s = if let Some((ref x, _)) = self.senders {
@@ -172,7 +171,10 @@ where
         Ok(self.msg.send(msg).await?)
     }
 
-    async fn send_system(&mut self, msg: SystemMessage) -> Result<(), MailboxSendError<SystemMessage>> {
+    async fn send_system(
+        &mut self,
+        msg: SystemMessage,
+    ) -> Result<(), MailboxSendError<SystemMessage>> {
         Ok(self.sys.send(msg).await?)
     }
 }

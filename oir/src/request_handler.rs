@@ -4,10 +4,7 @@ use crate::actor::ErrorBox;
 use crate::actor::ShutdownReason;
 use crate::actor::SystemMessage;
 
-use crate::mailbox::{
-    Mailbox,
-    UnnamedMailbox,
-};
+use crate::mailbox::{Mailbox, UnnamedMailbox};
 
 use tokio;
 use tokio::sync::mpsc;
