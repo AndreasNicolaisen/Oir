@@ -48,16 +48,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     rt.block_on(async {
         let (mut unnamed_mailbox, _h0) = request_actor(Stactor::new());
+        let (mut named_mailbox) = unnamed_mailbox.register("stactor".into());
 
         let mut vec = Vec::new();
-
         for i in 0..1024i32 {
-            let mut unnamed_mailbox0 = unnamed_mailbox.clone();
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();
             vec.push((
                 one_r,
                 tokio::spawn(async move {
-                    let _ = unnamed_mailbox0
+                    let _ = NamedMailbox::new("stactor".into())
                         .send((one_s, StoreRequest::Set(i, i)))
                         .await;
                 }),
@@ -71,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for i in 0..1024 {
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();
-            unnamed_mailbox
+            named_mailbox
                 .send((one_s, StoreRequest::Get(i)))
                 .await
                 .unwrap();
