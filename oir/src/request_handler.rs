@@ -4,6 +4,11 @@ use crate::actor::ErrorBox;
 use crate::actor::ShutdownReason;
 use crate::actor::SystemMessage;
 
+use crate::mailbox::{
+    Mailbox,
+    UnnamedMailbox,
+};
+
 use tokio;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -35,76 +40,83 @@ where
 
 pub fn request_actor<T, U, M>(
     mut actor: M,
-    mut rs: mpsc::Receiver<SystemMessage>,
-    mut rp: mpsc::Receiver<(oneshot::Sender<U>, T)>,
-) -> tokio::task::JoinHandle<()>
+) -> (
+    UnnamedMailbox<(oneshot::Sender<U>, T)>,
+    tokio::task::JoinHandle<()>,
+)
 where
-    T: Send + 'static,
-    U: Send + 'static,
+    T: Send + Sync + 'static,
+    U: Send + Sync + 'static,
     M: RequestHandler<T, U> + Send + 'static,
 {
-    tokio::spawn(async move {
-        use Response::*;
-        let mut parent = None;
-        let mut pending = HashMap::new();
-        let (mut lss, mut lsr) = mpsc::channel::<(RequestId, U)>(512);
+    let (mut ss, mut rs) = mpsc::channel::<SystemMessage>(512);
+    let (mut sp, mut rp) = mpsc::channel::<(oneshot::Sender<U>, T)>(512);
 
-        let reason;
-        'outer: loop {
-            tokio::select! {
-                sys_msg = rs.recv() => {
-                    match sys_msg {
-                        Some(SystemMessage::Shutdown) => {
-                            reason = ShutdownReason::Shutdown;
-                            break 'outer;
-                        },
-                        Some(SystemMessage::Link(sender)) => {
-                            parent = Some(sender);
-                        },
-                        _ => {}
-                    }
-                },
-                request_msg = rp.recv() => {
-                    if let Some((respond_sender, msg)) = request_msg {
-                        let result;
-                        let request_id = RequestId(Uuid::new_v4());
-                        match actor.on_request(&mut lss, request_id, msg).await {
-                            Ok(Reply(r)) => {
-                                result = r;
+    (
+        UnnamedMailbox::new(ss, sp),
+        tokio::spawn(async move {
+            use Response::*;
+            let mut parent = None;
+            let mut pending = HashMap::new();
+            let (mut lss, mut lsr) = mpsc::channel::<(RequestId, U)>(512);
 
-                                if respond_sender.send(result).is_err() {
-                                    reason = ShutdownReason::Crashed;
-                                    break 'outer;
-                                }
-                            },
-                            Ok(NoReply) => {
-                                pending.insert(request_id, respond_sender);
-                            }
-                            Err(_err) => {
-                                reason = ShutdownReason::Crashed;
+            let reason;
+            'outer: loop {
+                tokio::select! {
+                    sys_msg = rs.recv() => {
+                        match sys_msg {
+                            Some(SystemMessage::Shutdown) => {
+                                reason = ShutdownReason::Shutdown;
                                 break 'outer;
                             },
+                            Some(SystemMessage::Link(sender)) => {
+                                parent = Some(sender);
+                            },
+                            _ => {}
+                        }
+                    },
+                    request_msg = rp.recv() => {
+                        if let Some((respond_sender, msg)) = request_msg {
+                            let result;
+                            let request_id = RequestId(Uuid::new_v4());
+                            match actor.on_request(&mut lss, request_id, msg).await {
+                                Ok(Reply(r)) => {
+                                    result = r;
+
+                                    if respond_sender.send(result).is_err() {
+                                        reason = ShutdownReason::Crashed;
+                                        break 'outer;
+                                    }
+                                },
+                                Ok(NoReply) => {
+                                    pending.insert(request_id, respond_sender);
+                                }
+                                Err(_err) => {
+                                    reason = ShutdownReason::Crashed;
+                                    break 'outer;
+                                },
+                            }
                         }
                     }
-                }
-                late_response_msg = lsr.recv() => {
-                    if let Some((request_id, result)) = late_response_msg {
-                        if let None = pending
-                            .remove(&request_id)
-                            .and_then(|reply_sender| reply_sender.send(result).ok())
-                        {
-                            reason = ShutdownReason::Crashed;
-                            break 'outer;
+                    late_response_msg = lsr.recv() => {
+                        if let Some((request_id, result)) = late_response_msg {
+                            if let None = pending
+                                .remove(&request_id)
+                                .and_then(|reply_sender| reply_sender.send(result).ok())
+                            {
+                                reason = ShutdownReason::Crashed;
+                                break 'outer;
+                            }
                         }
                     }
                 }
             }
-        }
 
-        if let Some(parent) = parent {
-            let _ = parent.send(reason).await;
-        }
-    })
+            if let Some(parent) = parent {
+                let _ = parent.send(reason).await;
+            }
+        }),
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -168,18 +180,15 @@ where
 mod tests {
     use super::*;
 
-    fn setup_stactor() -> mpsc::Sender<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)> {
-        let (_ts0, rs0) = mpsc::channel::<SystemMessage>(512);
-        let (tp0, rp0) =
-            mpsc::channel::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>(1024);
-        let _h0 = request_actor(Stactor::new(), rs0, rp0);
+    fn setup_stactor() -> UnnamedMailbox<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)> {
+        let (tp0, _h0) = request_actor(Stactor::new());
 
         tp0
     }
 
     #[tokio::test]
     async fn stactor_simple_test() {
-        let tp = setup_stactor();
+        let mut tp = setup_stactor();
 
         {
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();
@@ -197,8 +206,8 @@ mod tests {
 
     #[tokio::test]
     async fn stactor_deferred_response_test() {
-        let tp = setup_stactor();
-        let tp1 = tp.clone();
+        let mut tp = setup_stactor();
+        let mut tp1 = tp.clone();
 
         let handle = tokio::spawn(async move {
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();
@@ -220,7 +229,7 @@ mod tests {
         let mut tp = setup_stactor();
 
         async fn req(
-            tp: &mut mpsc::Sender<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>,
+            tp: &mut UnnamedMailbox<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>,
             r: StoreRequest<i32, i32>,
         ) -> Option<i32> {
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();

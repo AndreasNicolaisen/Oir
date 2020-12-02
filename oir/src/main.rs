@@ -19,6 +19,10 @@ use crate::request_handler::request_actor;
 use crate::request_handler::Stactor;
 use crate::request_handler::StoreRequest;
 
+use crate::mailbox::Mailbox;
+use crate::mailbox::NamedMailbox;
+use crate::mailbox::UnnamedMailbox;
+
 use tokio;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -48,20 +52,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     });
     rt.block_on(async {
-        let (_ts0, rs0) = mpsc::channel::<SystemMessage>(512);
-        let (tp0, rp0) =
-            mpsc::channel::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>(1024);
-        let _h0 = request_actor(Stactor::new(), rs0, rp0);
+        let (mut unnamed_mailbox, _h0) = request_actor(Stactor::new());
 
         let mut vec = Vec::new();
 
-        for i in 0..1024 {
-            let tp0 = tp0.clone();
+        for i in 0..1024i32 {
+            let mut unnamed_mailbox0 = unnamed_mailbox.clone();
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();
             vec.push((
                 one_r,
                 tokio::spawn(async move {
-                    let _ = tp0.send((one_s, StoreRequest::Set(i, i))).await;
+                    let _ = unnamed_mailbox0
+                        .send((one_s, StoreRequest::Set(i, i)))
+                        .await;
                 }),
             ));
         }
@@ -73,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for i in 0..1024 {
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();
-            tp0.send((one_s, StoreRequest::Get(i))).await?;
+            unnamed_mailbox.send((one_s, StoreRequest::Get(i))).await.unwrap();
             let result = one_r.await?;
             assert_eq!(Some(i), result);
         }
