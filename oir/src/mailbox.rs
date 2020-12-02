@@ -127,21 +127,27 @@ impl ActorDirectory {
 
 #[cfg(test)]
 mod tests {
+    use rand;
     use super::*;
+
+    fn gensym() -> String {
+       format!("${:016x}", rand::random::<u64>())
+    }
 
     #[test]
     fn register_and_resolve() {
         let (ss, _) = mpsc::channel::<SystemMessage>(1);
         let (sm, _) = mpsc::channel::<i32>(1);
-        ActorDirectory::register("name1".to_owned(), (ss, sm));
-        ActorDirectory::resolve::<i32>("name1").unwrap();
+        let name = gensym();
+        ActorDirectory::register(name.clone(), (ss, sm));
+        ActorDirectory::resolve::<i32>(&name).unwrap();
     }
 
     #[test]
     fn resolve_not_found() {
         assert_eq!(
             ResolutionError::NameNotFound,
-            ActorDirectory::resolve::<i32>("name2").unwrap_err()
+            ActorDirectory::resolve::<i32>(&gensym()).unwrap_err()
         );
     }
 
@@ -149,11 +155,12 @@ mod tests {
     fn resolve_wrong_type() {
         let (ss, _) = mpsc::channel::<SystemMessage>(1);
         let (sm, _) = mpsc::channel::<i32>(1);
-        ActorDirectory::register("name3".to_owned(), (ss, sm));
+        let name = gensym();
+        ActorDirectory::register(name.clone(), (ss, sm));
 
         assert_eq!(
             ResolutionError::WrongType,
-            ActorDirectory::resolve::<i64>("name3").unwrap_err()
+            ActorDirectory::resolve::<i64>(&name).unwrap_err()
         );
     }
 
@@ -161,9 +168,10 @@ mod tests {
     async fn mailbox_send() {
         let (ss, _) = mpsc::channel::<SystemMessage>(2);
         let (sm, mut rm) = mpsc::channel::<i32>(2);
-        ActorDirectory::register("name4".to_owned(), (ss, sm));
+        let name = gensym();
+        ActorDirectory::register(name.clone(), (ss, sm));
 
-        let mut mailbox = Mailbox::new("name4".to_owned());
+        let mut mailbox = Mailbox::new(name);
 
         mailbox.send(1).await.unwrap();
         mailbox.send(2).await.unwrap();
@@ -174,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn mailbox_send_to_unregisted() {
-        let mut mailbox = Mailbox::new("name5".to_owned());
+        let mut mailbox = Mailbox::new(gensym());
         assert!(matches!(
             mailbox.send(1i32).await,
             Err(MailboxSendError::ResolutionError(
@@ -187,9 +195,10 @@ mod tests {
     async fn mailbox_send_to_closed() {
         let (ss, _)  = mpsc::channel::<SystemMessage>(2);
         let (sm, mut rm) = mpsc::channel::<i32>(2);
-        ActorDirectory::register("name6".to_owned(), (ss, sm));
+        let name = gensym();
+        ActorDirectory::register(name.clone(), (ss, sm));
 
-        let mut mailbox = Mailbox::new("name6".to_owned());
+        let mut mailbox = Mailbox::new(name);
 
         mailbox.send(1).await.unwrap();
         assert_eq!(1, rm.recv().await.unwrap());
@@ -207,9 +216,10 @@ mod tests {
     async fn mailbox_send_to_reregistered() {
         let (ss1, _)  = mpsc::channel::<SystemMessage>(2);
         let (sm1, mut rm1) = mpsc::channel::<i32>(2);
-        ActorDirectory::register("name7".to_owned(), (ss1, sm1));
+        let name = gensym();
+        ActorDirectory::register(name.clone(), (ss1, sm1));
 
-        let mut mailbox = Mailbox::new("name7".to_owned());
+        let mut mailbox = Mailbox::new(name.clone());
 
         mailbox.send(1).await.unwrap();
         assert_eq!(1, rm1.recv().await.unwrap());
@@ -217,7 +227,7 @@ mod tests {
 
         let (ss2, _)  = mpsc::channel::<SystemMessage>(2);
         let (sm2, mut rm2) = mpsc::channel::<i32>(2);
-        ActorDirectory::register("name7".to_owned(), (ss2, sm2));
+        ActorDirectory::register(name, (ss2, sm2));
 
         mailbox.send(2).await.unwrap();
         assert_eq!(2, rm2.recv().await.unwrap());
@@ -227,9 +237,10 @@ mod tests {
     async fn mailbox_send_to_reregistered_and_retyped() {
         let (ss1, _)  = mpsc::channel::<SystemMessage>(2);
         let (sm1, mut rm1) = mpsc::channel::<i32>(2);
-        ActorDirectory::register("name8".to_owned(), (ss1, sm1));
+        let name = gensym();
+        ActorDirectory::register(name.clone(), (ss1, sm1));
 
-        let mut mailbox = Mailbox::new("name8".to_owned());
+        let mut mailbox = Mailbox::new(name.clone());
 
         mailbox.send(1).await.unwrap();
         assert_eq!(1, rm1.recv().await.unwrap());
@@ -237,7 +248,7 @@ mod tests {
 
         let (ss2, _)  = mpsc::channel::<SystemMessage>(2);
         let (sm2, mut rm2) = mpsc::channel::<i64>(2);
-        ActorDirectory::register("name8".to_owned(), (ss2, sm2));
+        ActorDirectory::register(name, (ss2, sm2));
 
         assert!(matches!(
             mailbox.send(2).await,
