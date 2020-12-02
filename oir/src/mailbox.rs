@@ -31,11 +31,14 @@ impl<T> From<mpsc::error::SendError<T>> for MailboxSendError<T> {
 impl<T> fmt::Display for MailboxSendError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use MailboxSendError::*;
-        write!(f, "Failed to send message: ");
-        match self {
-            ResolutionError(_) => write!(f, "could not resolve name"),
-            SendError(_) => write!(f, "channel closed"),
-        }
+        write!(
+            f,
+            "Failed to send message: {}",
+            match self {
+                ResolutionError(_) => "could not resolve name",
+                SendError(_) => "channel closed",
+            }
+        )
     }
 }
 
