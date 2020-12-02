@@ -4,7 +4,7 @@ use crate::actor::ErrorBox;
 use crate::actor::ShutdownReason;
 use crate::actor::SystemMessage;
 
-use crate::mailbox::{Mailbox, UnnamedMailbox};
+use crate::mailbox::UnnamedMailbox;
 
 use tokio;
 use tokio::sync::mpsc;
@@ -46,8 +46,8 @@ where
     U: Send + Sync + 'static,
     M: RequestHandler<T, U> + Send + 'static,
 {
-    let (mut ss, mut rs) = mpsc::channel::<SystemMessage>(512);
-    let (mut sp, mut rp) = mpsc::channel::<(oneshot::Sender<U>, T)>(512);
+    let (ss, mut rs) = mpsc::channel::<SystemMessage>(512);
+    let (sp, mut rp) = mpsc::channel::<(oneshot::Sender<U>, T)>(512);
 
     (
         UnnamedMailbox::new(ss, sp),
@@ -162,8 +162,8 @@ where
             StoreRequest::Set(key, value) => match self.store.entry(key.clone()) {
                 Entry::Occupied(mut e) => Ok(Reply(Some(e.insert(value)))),
                 Entry::Vacant(e) => {
-                    for (id, _) in self.pending.drain_filter(|&mut (id, ref k)| k == &key) {
-                        deferred_sender.send((id, Some(value.clone()))).await;
+                    for (id, _) in self.pending.drain_filter(|&mut (_id, ref k)| k == &key) {
+                        let _ = deferred_sender.send((id, Some(value.clone()))).await;
                     }
                     e.insert(value);
                     Ok(Reply(None))
@@ -234,7 +234,7 @@ mod tests {
             one_r.await.unwrap()
         }
 
-        let INIT_SIZE = 16;
+        let init_size = 16;
         let mut hs = Vec::new();
 
         let mut adder = |x, y, z, mut tp| {
@@ -258,9 +258,9 @@ mod tests {
             adder(i * 2, i * 2 + 1, 16 + i, tp.clone());
         }
         // Suppliers
-        for i in 0..INIT_SIZE {
+        for i in 0..init_size {
             let mut tp = tp.clone();
-            if i < INIT_SIZE {
+            if i < init_size {
                 hs.push(tokio::spawn(async move {
                     assert!(req(&mut tp, StoreRequest::Set(i, 1)).await.is_none());
                 }));

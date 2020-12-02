@@ -56,8 +56,8 @@ where
     M: MessageHandler<T> + Send + 'static,
     T: Send + Sync + 'static,
 {
-    let (mut ss, mut rs) = mpsc::channel::<SystemMessage>(512);
-    let (mut sp, mut rp) = mpsc::channel::<T>(512);
+    let (ss, mut rs) = mpsc::channel::<SystemMessage>(512);
+    let (sp, mut rp) = mpsc::channel::<T>(512);
 
     (
         UnnamedMailbox::new(ss, sp),

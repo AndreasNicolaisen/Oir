@@ -4,7 +4,6 @@
 extern crate lazy_static;
 
 use crate::actor::ErrorBox;
-use crate::actor::SystemMessage;
 
 mod actor;
 mod mailbox;
@@ -21,10 +20,8 @@ use crate::request_handler::StoreRequest;
 
 use crate::mailbox::Mailbox;
 use crate::mailbox::NamedMailbox;
-use crate::mailbox::UnnamedMailbox;
 
 use tokio;
-use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,8 +44,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     });
     rt.block_on(async {
-        let (mut unnamed_mailbox, _h0) = request_actor(Stactor::new());
-        let (mut named_mailbox) = unnamed_mailbox.register("stactor".into());
+        let (unnamed_mailbox, _h0) = request_actor(Stactor::new());
+        let mut named_mailbox = unnamed_mailbox.register("stactor".into());
 
         let mut vec = Vec::new();
         for i in 0..1024i32 {
