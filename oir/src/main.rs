@@ -30,23 +30,18 @@ use tokio::sync::oneshot;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rt = tokio::runtime::Runtime::new()?;
     let _: Result<(), ErrorBox> = rt.block_on(async {
-        let (ts0, rs0) = mpsc::channel::<SystemMessage>(512);
-        let (tp0, rp0) = mpsc::channel::<PingMessage>(512);
-        let h0 = message_actor(PingActor { subject: None }, rs0, rp0);
-
-        let (ts1, rs1) = mpsc::channel::<SystemMessage>(512);
-        let (tp1, rp1) = mpsc::channel::<PingMessage>(512);
-        let h1 = message_actor(PingActor { subject: None }, rs1, rp1);
+        let (mut mb0, h0) = message_actor(PingActor { subject: None });
+        let (mut mb1, h1) = message_actor(PingActor { subject: None });
 
         // Pings
-        tp0.send(PingMessage::Setup(tp1.clone())).await?;
-        tp1.send(PingMessage::Setup(tp0.clone())).await?;
-        tp0.send(PingMessage::Ping).await?;
+        mb0.send(PingMessage::Setup(mb1.clone())).await?;
+        mb1.send(PingMessage::Setup(mb0.clone())).await?;
+        mb0.send(PingMessage::Ping).await?;
         tokio::time::sleep(tokio::time::Duration::new(0, 1)).await;
 
         // Shutdown
-        ts0.send(SystemMessage::Shutdown).await?;
-        ts1.send(SystemMessage::Shutdown).await?;
+        mb0.shutdown().await?;
+        mb1.shutdown().await?;
         h0.await?;
         h1.await?;
         Ok(())
@@ -76,7 +71,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for i in 0..1024 {
             let (one_s, one_r) = oneshot::channel::<Option<i32>>();
-            unnamed_mailbox.send((one_s, StoreRequest::Get(i))).await.unwrap();
+            unnamed_mailbox
+                .send((one_s, StoreRequest::Get(i)))
+                .await
+                .unwrap();
             let result = one_r.await?;
             assert_eq!(Some(i), result);
         }

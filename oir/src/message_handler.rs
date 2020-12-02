@@ -7,16 +7,18 @@ use tokio::sync::mpsc;
 
 use async_trait::async_trait;
 
+use crate::mailbox::{Mailbox, UnnamedMailbox};
+
 #[async_trait]
 pub trait MessageHandler<T>: Send + 'static
 where
-    T: Send + 'static,
+    T: Send + Sync + 'static,
 {
     async fn on_message(&mut self, msg: T) -> Result<(), ErrorBox>;
 }
 
 pub struct PingActor {
-    pub subject: Option<mpsc::Sender<PingMessage>>,
+    pub subject: Option<UnnamedMailbox<PingMessage>>,
 }
 
 #[async_trait]
@@ -44,48 +46,50 @@ impl MessageHandler<PingMessage> for PingActor {
 
 #[derive(Debug)]
 pub enum PingMessage {
-    Setup(mpsc::Sender<PingMessage>),
+    Setup(UnnamedMailbox<PingMessage>),
     Ping,
     Pong,
 }
 
-pub fn message_actor<T, M>(
-    mut actor: M,
-    mut rs: mpsc::Receiver<SystemMessage>,
-    mut rp: mpsc::Receiver<T>,
-) -> tokio::task::JoinHandle<()>
+pub fn message_actor<T, M>(mut actor: M) -> (UnnamedMailbox<T>, tokio::task::JoinHandle<()>)
 where
     M: MessageHandler<T> + Send + 'static,
-    T: Send + 'static,
+    T: Send + Sync + 'static,
 {
-    tokio::spawn(async move {
-        let mut parent = None;
-        let reason;
-        'outer: loop {
-            tokio::select! {
-                sys_msg = rs.recv() => {
-                    match sys_msg {
-                        Some(SystemMessage::Shutdown) => {
-                            reason = ShutdownReason::Shutdown;
+    let (mut ss, mut rs) = mpsc::channel::<SystemMessage>(512);
+    let (mut sp, mut rp) = mpsc::channel::<T>(512);
+
+    (
+        UnnamedMailbox::new(ss, sp),
+        tokio::spawn(async move {
+            let mut parent = None;
+            let reason;
+            'outer: loop {
+                tokio::select! {
+                    sys_msg = rs.recv() => {
+                        match sys_msg {
+                            Some(SystemMessage::Shutdown) => {
+                                reason = ShutdownReason::Shutdown;
+                                break 'outer;
+                            },
+                            Some(SystemMessage::Link(sender)) => {
+                                parent = Some(sender);
+                            },
+                            _ => {}
+                        }
+                    },
+                    ping_msg = rp.recv() => if let Some(msg) = ping_msg {
+                        if actor.on_message(msg).await.is_err() {
+                            reason = ShutdownReason::Crashed;
                             break 'outer;
-                        },
-                        Some(SystemMessage::Link(sender)) => {
-                            parent = Some(sender);
-                        },
-                        _ => {}
-                    }
-                },
-                ping_msg = rp.recv() => if let Some(msg) = ping_msg {
-                    if actor.on_message(msg).await.is_err() {
-                        reason = ShutdownReason::Crashed;
-                        break 'outer;
+                        }
                     }
                 }
             }
-        }
 
-        if let Some(parent) = parent {
-            let _ = parent.send(reason).await;
-        }
-    })
+            if let Some(parent) = parent {
+                let _ = parent.send(reason).await;
+            }
+        }),
+    )
 }
