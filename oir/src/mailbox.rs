@@ -4,6 +4,7 @@ use std::sync::RwLock;
 
 use crate::actor::SystemMessage;
 
+use async_trait::async_trait;
 use tokio;
 use tokio::sync::mpsc;
 
@@ -25,17 +26,25 @@ impl<T> From<mpsc::error::SendError<T>> for MailboxSendError<T> {
     }
 }
 
-pub struct Mailbox<T> {
+#[async_trait]
+pub trait Mailbox<T>
+where
+    T: Send + Sync + 'static,
+{
+    async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>>;
+}
+
+pub struct NamedMailbox<T> {
     senders: Option<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>)>,
     name: String,
 }
 
-impl<T> Mailbox<T>
+impl<T> NamedMailbox<T>
 where
     T: Send + Sync + 'static,
 {
-    pub fn new(name: String) -> Mailbox<T> {
-        Mailbox {
+    pub fn new(name: String) -> NamedMailbox<T> {
+        NamedMailbox {
             senders: None,
             name,
         }
@@ -54,8 +63,14 @@ where
             Ok(())
         }
     }
+}
 
-    pub async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
+#[async_trait]
+impl<T> Mailbox<T> for NamedMailbox<T>
+where
+    T: Send + Sync + 'static,
+{
+    async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
         self.resolve()?;
 
         let msg_sender = if let Some((_, ref x)) = self.senders {
@@ -67,6 +82,62 @@ where
         };
 
         Ok(msg_sender.send(msg).await?)
+    }
+}
+
+impl<T> Clone for NamedMailbox<T>
+where
+    T: Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        NamedMailbox {
+            senders: self.senders.clone(),
+            name: self.name.clone(),
+        }
+    }
+}
+
+pub struct UnnamedMailbox<T> {
+    sys: mpsc::Sender<SystemMessage>,
+    msg: mpsc::Sender<T>,
+}
+
+impl<T> UnnamedMailbox<T>
+where
+    T: Send + Sync + 'static,
+{
+    pub fn new(sys: mpsc::Sender<SystemMessage>, msg: mpsc::Sender<T>) -> UnnamedMailbox<T> {
+        UnnamedMailbox { sys, msg }
+    }
+
+    pub fn register(self, name: String) -> NamedMailbox<T> {
+        ActorDirectory::register(name.clone(), (self.sys.clone(), self.msg.clone()));
+        NamedMailbox {
+            name,
+            senders: Some((self.sys, self.msg)),
+        }
+    }
+}
+
+#[async_trait]
+impl<T> Mailbox<T> for UnnamedMailbox<T>
+where
+    T: Send + Sync + 'static,
+{
+    async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
+        Ok(self.msg.send(msg).await?)
+    }
+}
+
+impl<T> Clone for UnnamedMailbox<T>
+where
+    T: Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        UnnamedMailbox {
+            sys: self.sys.clone(),
+            msg: self.msg.clone(),
+        }
     }
 }
 
@@ -127,11 +198,11 @@ impl ActorDirectory {
 
 #[cfg(test)]
 mod tests {
-    use rand;
     use super::*;
+    use rand;
 
     fn gensym() -> String {
-       format!("${:016x}", rand::random::<u64>())
+        format!("${:016x}", rand::random::<u64>())
     }
 
     #[test]
@@ -171,7 +242,7 @@ mod tests {
         let name = gensym();
         ActorDirectory::register(name.clone(), (ss, sm));
 
-        let mut mailbox = Mailbox::new(name);
+        let mut mailbox = NamedMailbox::new(name);
 
         mailbox.send(1).await.unwrap();
         mailbox.send(2).await.unwrap();
@@ -182,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn mailbox_send_to_unregisted() {
-        let mut mailbox = Mailbox::new(gensym());
+        let mut mailbox = NamedMailbox::new(gensym());
         assert!(matches!(
             mailbox.send(1i32).await,
             Err(MailboxSendError::ResolutionError(
@@ -193,12 +264,12 @@ mod tests {
 
     #[tokio::test]
     async fn mailbox_send_to_closed() {
-        let (ss, _)  = mpsc::channel::<SystemMessage>(2);
+        let (ss, _) = mpsc::channel::<SystemMessage>(2);
         let (sm, mut rm) = mpsc::channel::<i32>(2);
         let name = gensym();
         ActorDirectory::register(name.clone(), (ss, sm));
 
-        let mut mailbox = Mailbox::new(name);
+        let mut mailbox = NamedMailbox::new(name);
 
         mailbox.send(1).await.unwrap();
         assert_eq!(1, rm.recv().await.unwrap());
@@ -206,26 +277,24 @@ mod tests {
         rm.close();
         assert!(matches!(
             mailbox.send(2).await,
-            Err(MailboxSendError::SendError(
-                mpsc::error::SendError(2)
-            ))
+            Err(MailboxSendError::SendError(mpsc::error::SendError(2)))
         ))
     }
 
     #[tokio::test]
     async fn mailbox_send_to_reregistered() {
-        let (ss1, _)  = mpsc::channel::<SystemMessage>(2);
+        let (ss1, _) = mpsc::channel::<SystemMessage>(2);
         let (sm1, mut rm1) = mpsc::channel::<i32>(2);
         let name = gensym();
         ActorDirectory::register(name.clone(), (ss1, sm1));
 
-        let mut mailbox = Mailbox::new(name.clone());
+        let mut mailbox = NamedMailbox::new(name.clone());
 
         mailbox.send(1).await.unwrap();
         assert_eq!(1, rm1.recv().await.unwrap());
         rm1.close();
 
-        let (ss2, _)  = mpsc::channel::<SystemMessage>(2);
+        let (ss2, _) = mpsc::channel::<SystemMessage>(2);
         let (sm2, mut rm2) = mpsc::channel::<i32>(2);
         ActorDirectory::register(name, (ss2, sm2));
 
@@ -235,18 +304,18 @@ mod tests {
 
     #[tokio::test]
     async fn mailbox_send_to_reregistered_and_retyped() {
-        let (ss1, _)  = mpsc::channel::<SystemMessage>(2);
+        let (ss1, _) = mpsc::channel::<SystemMessage>(2);
         let (sm1, mut rm1) = mpsc::channel::<i32>(2);
         let name = gensym();
         ActorDirectory::register(name.clone(), (ss1, sm1));
 
-        let mut mailbox = Mailbox::new(name.clone());
+        let mut mailbox = NamedMailbox::new(name.clone());
 
         mailbox.send(1).await.unwrap();
         assert_eq!(1, rm1.recv().await.unwrap());
         rm1.close();
 
-        let (ss2, _)  = mpsc::channel::<SystemMessage>(2);
+        let (ss2, _) = mpsc::channel::<SystemMessage>(2);
         let (sm2, mut rm2) = mpsc::channel::<i64>(2);
         ActorDirectory::register(name, (ss2, sm2));
 
@@ -256,5 +325,20 @@ mod tests {
                 ResolutionError::WrongType
             ))
         ))
+    }
+
+    #[tokio::test]
+    async fn mailbox_register_unnamed() {
+        let (ss1, _) = mpsc::channel::<SystemMessage>(2);
+        let (sm1, mut rm1) = mpsc::channel::<i32>(2);
+        let mut unnamed_mailbox = UnnamedMailbox::new(ss1, sm1);
+
+        let name = gensym();
+        let _ = unnamed_mailbox.register(name.clone());
+
+        let mut named_mailbox = NamedMailbox::new(name);
+        named_mailbox.send(1).await.unwrap();
+
+        assert_eq!(1, rm1.recv().await.unwrap());
     }
 }
