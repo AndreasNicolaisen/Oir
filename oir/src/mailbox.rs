@@ -1,3 +1,5 @@
+use std::fmt;
+use std::error;
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -25,6 +27,26 @@ impl<T> From<mpsc::error::SendError<T>> for MailboxSendError<T> {
         MailboxSendError::SendError(err)
     }
 }
+
+impl<T> fmt::Display for MailboxSendError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result  {
+        use MailboxSendError::*;
+        write!(f, "Failed to send message: ");
+        match self {
+            ResolutionError(_) => {
+                write!(f, "could not resolve name")
+            }
+            SendError(_) => {
+                write!(f, "channel closed")
+            }
+        }
+    }
+}
+
+impl<T> error::Error for MailboxSendError<T>
+where
+    T: fmt::Debug
+{}
 
 #[async_trait]
 pub trait Mailbox<T>
