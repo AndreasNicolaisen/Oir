@@ -7,6 +7,24 @@ use crate::actor::SystemMessage;
 use tokio;
 use tokio::sync::mpsc;
 
+#[derive(Debug)]
+pub enum MailboxSendError<T> {
+    ResolutionError(ResolutionError),
+    SendError(mpsc::error::SendError<T>),
+}
+
+impl<T> From<ResolutionError> for MailboxSendError<T> {
+    fn from(err: ResolutionError) -> Self {
+        MailboxSendError::ResolutionError(err)
+    }
+}
+
+impl<T> From<mpsc::error::SendError<T>> for MailboxSendError<T> {
+    fn from(err: mpsc::error::SendError<T>) -> Self {
+        MailboxSendError::SendError(err)
+    }
+}
+
 pub struct Mailbox<T> {
     senders: Option<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>)>,
     name: String,
@@ -24,13 +42,31 @@ where
     }
 
     pub fn resolve(&mut self) -> Result<(), ResolutionError> {
-        if self.senders.is_none() {
+        if self
+            .senders
+            .as_ref()
+            .map_or(true, |(_, ref s)| s.is_closed())
+        {
             ActorDirectory::resolve(&self.name).map(|senders| {
                 self.senders = Some(senders);
             })
         } else {
             Ok(())
         }
+    }
+
+    pub async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
+        self.resolve()?;
+
+        let msg_sender = if let Some((_, ref x)) = self.senders {
+            x
+        } else {
+            // self.resolve() will have returned an error, if senders couldn't be resolved,
+            // ie. they would have been None.
+            unreachable!()
+        };
+
+        Ok(msg_sender.send(msg).await?)
     }
 }
 
@@ -119,5 +155,95 @@ mod tests {
             ResolutionError::WrongType,
             ActorDirectory::resolve::<i64>("name3").unwrap_err()
         );
+    }
+
+    #[tokio::test]
+    async fn mailbox_send() {
+        let (ss, _) = mpsc::channel::<SystemMessage>(2);
+        let (sm, mut rm) = mpsc::channel::<i32>(2);
+        ActorDirectory::register("name4".to_owned(), (ss, sm));
+
+        let mut mailbox = Mailbox::new("name4".to_owned());
+
+        mailbox.send(1).await.unwrap();
+        mailbox.send(2).await.unwrap();
+
+        assert_eq!(1, rm.recv().await.unwrap());
+        assert_eq!(2, rm.recv().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn mailbox_send_to_unregisted() {
+        let mut mailbox = Mailbox::new("name5".to_owned());
+        assert!(matches!(
+            mailbox.send(1i32).await,
+            Err(MailboxSendError::ResolutionError(
+                ResolutionError::NameNotFound
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn mailbox_send_to_closed() {
+        let (ss, _)  = mpsc::channel::<SystemMessage>(2);
+        let (sm, mut rm) = mpsc::channel::<i32>(2);
+        ActorDirectory::register("name6".to_owned(), (ss, sm));
+
+        let mut mailbox = Mailbox::new("name6".to_owned());
+
+        mailbox.send(1).await.unwrap();
+        assert_eq!(1, rm.recv().await.unwrap());
+
+        rm.close();
+        assert!(matches!(
+            mailbox.send(2).await,
+            Err(MailboxSendError::SendError(
+                mpsc::error::SendError(2)
+            ))
+        ))
+    }
+
+    #[tokio::test]
+    async fn mailbox_send_to_reregistered() {
+        let (ss1, _)  = mpsc::channel::<SystemMessage>(2);
+        let (sm1, mut rm1) = mpsc::channel::<i32>(2);
+        ActorDirectory::register("name7".to_owned(), (ss1, sm1));
+
+        let mut mailbox = Mailbox::new("name7".to_owned());
+
+        mailbox.send(1).await.unwrap();
+        assert_eq!(1, rm1.recv().await.unwrap());
+        rm1.close();
+
+        let (ss2, _)  = mpsc::channel::<SystemMessage>(2);
+        let (sm2, mut rm2) = mpsc::channel::<i32>(2);
+        ActorDirectory::register("name7".to_owned(), (ss2, sm2));
+
+        mailbox.send(2).await.unwrap();
+        assert_eq!(2, rm2.recv().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn mailbox_send_to_reregistered_and_retyped() {
+        let (ss1, _)  = mpsc::channel::<SystemMessage>(2);
+        let (sm1, mut rm1) = mpsc::channel::<i32>(2);
+        ActorDirectory::register("name8".to_owned(), (ss1, sm1));
+
+        let mut mailbox = Mailbox::new("name8".to_owned());
+
+        mailbox.send(1).await.unwrap();
+        assert_eq!(1, rm1.recv().await.unwrap());
+        rm1.close();
+
+        let (ss2, _)  = mpsc::channel::<SystemMessage>(2);
+        let (sm2, mut rm2) = mpsc::channel::<i64>(2);
+        ActorDirectory::register("name8".to_owned(), (ss2, sm2));
+
+        assert!(matches!(
+            mailbox.send(2).await,
+            Err(MailboxSendError::ResolutionError(
+                ResolutionError::WrongType
+            ))
+        ))
     }
 }
