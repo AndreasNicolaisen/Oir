@@ -53,7 +53,6 @@ where
         UnnamedMailbox::new(ss, sp),
         tokio::spawn(async move {
             use Response::*;
-            let mut parent = None;
             let mut pending = HashMap::new();
             let (mut lss, mut lsr) = mpsc::channel::<(RequestId, U)>(512);
 
@@ -65,9 +64,6 @@ where
                             Some(SystemMessage::Shutdown) => {
                                 reason = ShutdownReason::Shutdown;
                                 break 'outer;
-                            },
-                            Some(SystemMessage::Link(sender)) => {
-                                parent = Some(sender);
                             },
                             _ => {}
                         }
@@ -107,10 +103,6 @@ where
                         }
                     }
                 }
-            }
-
-            if let Some(parent) = parent {
-                let _ = parent.send(reason).await;
             }
         }),
     )

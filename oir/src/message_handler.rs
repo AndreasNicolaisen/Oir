@@ -62,7 +62,6 @@ where
     (
         UnnamedMailbox::new(ss, sp),
         tokio::spawn(async move {
-            let mut parent = None;
             let reason;
             'outer: loop {
                 tokio::select! {
@@ -71,9 +70,6 @@ where
                             Some(SystemMessage::Shutdown) => {
                                 reason = ShutdownReason::Shutdown;
                                 break 'outer;
-                            },
-                            Some(SystemMessage::Link(sender)) => {
-                                parent = Some(sender);
                             },
                             _ => {}
                         }
@@ -85,10 +81,6 @@ where
                         }
                     }
                 }
-            }
-
-            if let Some(parent) = parent {
-                let _ = parent.send(reason).await;
             }
         }),
     )
