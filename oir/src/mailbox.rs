@@ -252,11 +252,8 @@ impl ActorDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand;
+    use crate::gensym::gensym;
 
-    fn gensym() -> String {
-        format!("${:016x}", rand::random::<u64>())
-    }
 
     #[test]
     fn register_and_resolve() {
