@@ -144,8 +144,8 @@ where
 
 #[derive(Debug)]
 pub struct UnnamedMailbox<T> {
-    sys: mpsc::Sender<SystemMessage>,
-    msg: mpsc::Sender<T>,
+    pub sys: mpsc::Sender<SystemMessage>,
+    pub msg: mpsc::Sender<T>,
 }
 
 impl<T> UnnamedMailbox<T>

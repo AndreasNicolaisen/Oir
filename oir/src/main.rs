@@ -10,6 +10,7 @@ mod actor;
 mod mailbox;
 mod message_handler;
 mod request_handler;
+mod supervisor;
 
 use crate::message_handler::message_actor;
 use crate::message_handler::PingActor;
