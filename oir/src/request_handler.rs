@@ -175,6 +175,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::mailbox::Mailbox;
     use super::*;
 
     fn setup_stactor() -> UnnamedMailbox<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)> {
