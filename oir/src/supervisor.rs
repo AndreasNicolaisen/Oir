@@ -57,36 +57,69 @@ where
         }
     })
 }
-
-#[derive(Debug)]
 struct SupervisorState {
+    shutdown: bool,
+    joins: mpsc::Sender<(usize, Result<(), tokio::task::JoinError>)>,
+    starters: Vec<Box<dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) + std::marker::Send + std::marker::Sync + 'static>>,
     system_senders: Vec<mpsc::Sender<SystemMessage>>,
 }
 
 impl SupervisorState {
     fn start_children(
         joins: mpsc::Sender<(usize, Result<(), tokio::task::JoinError>)>,
-        starters: &[Box<dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>)>],
-    ) -> SupervisorState {
+        starters: Vec<Box<dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) + std::marker::Send + std::marker::Sync + 'static>>)
+        -> SupervisorState {
+        let senders = starters
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let js = joins.clone();
+                let (sys, h) = f();
+                tokio::spawn(async move {
+                    js.send((i, h.await)).await;
+                });
+                sys
+            })
+            .collect();
         SupervisorState {
-            system_senders: starters
-                .iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    let js = joins.clone();
-                    let (sys, h) = f();
-                    tokio::spawn(async move {
-                        js.send((i, h.await)).await;
-                    });
-                    sys
-                })
-                .collect(),
+            shutdown: false,
+            joins,
+            starters,
+            system_senders: senders,
         }
+    }
+
+    async fn shutdown_children(mut self, mut joins: mpsc::Receiver<(usize, Result<(), tokio::task::JoinError>)>) {
+        for sender in &mut self.system_senders {
+            let _ = sender.send(SystemMessage::Shutdown).await;
+        }
+
+        for sender in &mut self.system_senders {
+            while !sender.is_closed() {
+                joins.recv().await.unwrap();
+            }
+        }
+    }
+
+    fn restart(&mut self, i : usize) {
+        assert!(i < self.starters.len());
+
+        let js = self.joins.clone();
+        let (sys, h) = self.starters[i]();
+        // TODO: Make sure we shutdown the old one if it's not already dead
+        tokio::spawn(async move {
+            js.send((i, h.await)).await;
+        });
+        self.system_senders[i] = sys;
     }
 }
 
 impl Drop for SupervisorState {
     fn drop(&mut self) {
+        if self.shutdown {
+            return;
+        }
+
         for sys in &mut self.system_senders {
             let _ = sys.try_send(SystemMessage::Shutdown);
         }
@@ -106,21 +139,10 @@ pub fn supervise_multi(
 ) -> tokio::task::JoinHandle<()> {
     use crate::request_handler::{request_actor, Stactor, StoreRequest};
 
+
     tokio::spawn(async move {
         let (js, mut joins) = mpsc::channel(512);
-
-        let start_child = |i| {
-            let js = js.clone();
-            let f: &Box<_> = &child_starters[i];
-            let (sys, h) = f();
-            tokio::spawn(async move {
-                js.send((i, h.await)).await;
-            });
-        };
-
-        for i in 0usize..child_starters.len() {
-            start_child(i);
-        }
+        let mut state = SupervisorState::start_children(js, child_starters);
 
         let reason;
         'outer: loop {
@@ -129,6 +151,7 @@ pub fn supervise_multi(
                     match sys_msg {
                         Some(SystemMessage::Shutdown) => {
                             reason = ShutdownReason::Shutdown;
+                            state.shutdown_children(joins).await;
                             break 'outer;
                         },
                         _ => {}
@@ -139,7 +162,7 @@ pub fn supervise_multi(
                         Some((_, Ok(()))) => { /* Child died sucessfully */ },
                         Some((i, Err(_))) => {
                             // TODO: Add restart limit
-                            let _ = start_child(i);
+                            let _ = state.restart(i);
                         },
                         _ => {}
                     }
