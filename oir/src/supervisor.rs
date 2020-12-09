@@ -309,16 +309,91 @@ mod tests {
 
     #[tokio::test]
     async fn nested_supervisor_test() {
+        let name = gensym();
+        let (rs, rr) = mpsc::channel::<SystemMessage>(512);
+        let h;
+        {
+            let name = name.clone();
+            let subsuper = move || {
+                let worker = move |name: String| {
+                    let (mb, h) = request_actor(Stactor::<i32, i32>::new());
+                    let sys = mb.sys.clone();
+                    mb.register(name.clone());
+                    (sys, h)
+                };
+                let name = name.clone();
+                let (rs, rr) = mpsc::channel::<SystemMessage>(512);
+                let h = supervise_multi(rr, vec![Box::new(move || worker(name.clone()))]);
+                (rs, h)
+            };
+            h = supervise_multi(rr, vec![Box::new(subsuper)]);
+        }
+
+        let mut mb = NamedMailbox::new(name.clone());
+
+        while matches!(mb.resolve(), Err(ResolutionError::NameNotFound)) {
+            tokio::task::yield_now().await;
+        }
+
+        let (rs, rr) = oneshot::channel::<Option<i32>>();
+
+        mb.send((rs, StoreRequest::Set(0i32, 3i32))).await.unwrap();
+
+        assert_eq!(Ok(None), rr.await);
+    }
+
+    #[tokio::test]
+    async fn stactor_supervisor_shutdown_test() {
+        let name0 = gensym();
+        let name1 = gensym();
         let (rs, rr) = mpsc::channel::<SystemMessage>(512);
         let h;
         {
             let starter = move |name| {
-                let (mb, h) = request_actor(Stactor::<BadKey, i32>::new());
+                let (mb, h) = request_actor(Stactor::<i32, i32>::new());
                 let sys = mb.sys.clone();
                 mb.register(name);
                 (sys, h)
             };
-            h = supervise_multi(rr, vec![]);
+            let name0 = name0.clone();
+            let name1 = name1.clone();
+            h = supervise_multi(
+                rr,
+                vec![
+                    Box::new(move || starter(name0.clone())),
+                    Box::new(move || starter(name1.clone())),
+                ],
+            );
+        }
+
+        let mut mb0 = NamedMailbox::new(name0);
+        let mut mb1 = NamedMailbox::new(name1);
+
+        while matches!(mb0.resolve(), Err(ResolutionError::NameNotFound)) ||
+              matches!(mb1.resolve(), Err(ResolutionError::NameNotFound)) {
+
+            tokio::task::yield_now().await;
+        }
+
+        {
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb0.send((rs, StoreRequest::Set(0i32, 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb1.send((rs, StoreRequest::Set(0i32, 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+        }
+
+        rs.send(SystemMessage::Shutdown).await.unwrap();
+        h.await;
+
+        {
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            assert!(matches!(mb0.send((rs, StoreRequest::Set(0i32, 1i32))).await, Err(_)));
         }
     }
 }
