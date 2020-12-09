@@ -1,7 +1,7 @@
 use crate::actor::ErrorBox;
 use crate::actor::ShutdownReason;
 use crate::actor::SystemMessage;
-use crate::mailbox::{UnnamedMailbox, Mailbox};
+use crate::mailbox::{Mailbox, UnnamedMailbox};
 
 use tokio;
 use tokio::sync::mpsc;
@@ -9,9 +9,13 @@ use tokio::sync::oneshot;
 
 use async_trait::async_trait;
 
-pub fn supervise_single<F>(mut rs: mpsc::Receiver<SystemMessage>, child_starter: F)
-                           -> tokio::task::JoinHandle<()>
-where F: Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) + Send + Sync + 'static {
+pub fn supervise_single<F>(
+    mut rs: mpsc::Receiver<SystemMessage>,
+    child_starter: F,
+) -> tokio::task::JoinHandle<()>
+where
+    F: Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) + Send + Sync + 'static,
+{
     use crate::request_handler::{request_actor, Stactor, StoreRequest};
 
     tokio::spawn(async move {
@@ -56,26 +60,27 @@ where F: Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) + Se
 
 #[derive(Debug)]
 struct SupervisorState {
-    system_senders: Vec<mpsc::Sender<SystemMessage>>
+    system_senders: Vec<mpsc::Sender<SystemMessage>>,
 }
 
 impl SupervisorState {
-    fn start_children(joins: mpsc::Sender<(usize, Result<(), tokio::task::JoinError>)>,
-                      starters: &[Box<dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>)>])
-                      -> SupervisorState {
-
+    fn start_children(
+        joins: mpsc::Sender<(usize, Result<(), tokio::task::JoinError>)>,
+        starters: &[Box<dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>)>],
+    ) -> SupervisorState {
         SupervisorState {
-            system_senders:
-            starters.iter()
+            system_senders: starters
+                .iter()
                 .enumerate()
                 .map(|(i, f)| {
                     let js = joins.clone();
-                    let (sys, h)  = f();
+                    let (sys, h) = f();
                     tokio::spawn(async move {
                         js.send((i, h.await)).await;
                     });
                     sys
-                }).collect()
+                })
+                .collect(),
         }
     }
 }
@@ -88,9 +93,17 @@ impl Drop for SupervisorState {
     }
 }
 
-pub fn supervise_multi(mut rs: mpsc::Receiver<SystemMessage>, child_starters: Vec<Box<dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) + Send + Sync + 'static>>)
-                           -> tokio::task::JoinHandle<()>
-{
+pub fn supervise_multi(
+    mut rs: mpsc::Receiver<SystemMessage>,
+    child_starters: Vec<
+        Box<
+            dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>)
+                + Send
+                + Sync
+                + 'static,
+        >,
+    >,
+) -> tokio::task::JoinHandle<()> {
     use crate::request_handler::{request_actor, Stactor, StoreRequest};
 
     tokio::spawn(async move {
@@ -99,7 +112,7 @@ pub fn supervise_multi(mut rs: mpsc::Receiver<SystemMessage>, child_starters: Ve
         let start_child = |i| {
             let js = js.clone();
             let f: &Box<_> = &child_starters[i];
-            let (sys, h)  = f();
+            let (sys, h) = f();
             tokio::spawn(async move {
                 js.send((i, h.await)).await;
             });
@@ -138,23 +151,23 @@ pub fn supervise_multi(mut rs: mpsc::Receiver<SystemMessage>, child_starters: Ve
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::gensym::gensym;
     use crate::mailbox::*;
     use crate::request_handler::{request_actor, Stactor, StoreRequest};
-    use crate::gensym::gensym;
     use std::hash::{Hash, Hasher};
-    use super::*;
 
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     enum BadKey {
         Good(i32),
-        Bad
+        Bad,
     }
 
     impl Hash for BadKey {
         fn hash<H: Hasher>(&self, state: &mut H) {
             match self {
                 Self::Good(i) => i.hash(state),
-                Self::Bad => panic!("bad!")
+                Self::Bad => panic!("bad!"),
             }
         }
     }
@@ -175,27 +188,37 @@ mod tests {
         }
         let mut mb = NamedMailbox::new(name);
 
-        while mb.resolve().is_err() { tokio::task::yield_now().await; }
+        while mb.resolve().is_err() {
+            tokio::task::yield_now().await;
+        }
 
         // Set a valid key
         let (rs, rr) = oneshot::channel();
-        mb.send((rs, StoreRequest::Set(BadKey::Good(0), 0xffi32))).await.unwrap();
+        mb.send((rs, StoreRequest::Set(BadKey::Good(0), 0xffi32)))
+            .await
+            .unwrap();
         assert_eq!(Ok(None), rr.await);
 
         // Make sure it's actually set
         let (rs, rr) = oneshot::channel();
-        mb.send((rs, StoreRequest::Get(BadKey::Good(0)))).await.unwrap();
+        mb.send((rs, StoreRequest::Get(BadKey::Good(0))))
+            .await
+            .unwrap();
         assert_eq!(Ok(Some(0xffi32)), rr.await);
 
         // Crash the stactor actor, then the supervisor should restart it
         // and the state should be clear again.
         let (rs, rr) = oneshot::channel();
-        mb.send((rs, StoreRequest::Set(BadKey::Bad, 0xffi32))).await.unwrap();
+        mb.send((rs, StoreRequest::Set(BadKey::Bad, 0xffi32)))
+            .await
+            .unwrap();
         assert!(matches!(rr.await, Err(_)));
 
         // Set the key again and make sure that there was no prior key
         let (rs, rr) = oneshot::channel();
-        mb.send((rs, StoreRequest::Set(BadKey::Good(0), 0xffi32))).await.unwrap();
+        mb.send((rs, StoreRequest::Set(BadKey::Good(0), 0xffi32)))
+            .await
+            .unwrap();
         assert_eq!(Ok(None), rr.await);
     }
 
@@ -214,33 +237,49 @@ mod tests {
             };
             let name0 = name0.clone();
             let name1 = name1.clone();
-            h = supervise_multi(rr, vec![ Box::new(move || starter(name0.clone())), Box::new(move || starter(name1.clone())) ]);
+            h = supervise_multi(
+                rr,
+                vec![
+                    Box::new(move || starter(name0.clone())),
+                    Box::new(move || starter(name1.clone())),
+                ],
+            );
         }
         for (i, name) in [name0, name1].into_iter().enumerate() {
             let i = i as i32;
             let mut mb = NamedMailbox::new(name.clone());
 
-            while mb.resolve().is_err() { tokio::task::yield_now().await; }
+            while mb.resolve().is_err() {
+                tokio::task::yield_now().await;
+            }
 
             // Set a valid key
             let (rs, rr) = oneshot::channel();
-            mb.send((rs, StoreRequest::Set(BadKey::Good(i), 0xffi32))).await.unwrap();
+            mb.send((rs, StoreRequest::Set(BadKey::Good(i), 0xffi32)))
+                .await
+                .unwrap();
             assert_eq!(Ok(None), rr.await);
 
             // Make sure it's actually set
             let (rs, rr) = oneshot::channel();
-            mb.send((rs, StoreRequest::Get(BadKey::Good(i)))).await.unwrap();
+            mb.send((rs, StoreRequest::Get(BadKey::Good(i))))
+                .await
+                .unwrap();
             assert_eq!(Ok(Some(0xffi32)), rr.await);
 
             // Crash the stactor actor, then the supervisor should restart it
             // and the state should be clear again.
             let (rs, rr) = oneshot::channel();
-            mb.send((rs, StoreRequest::Set(BadKey::Bad, 0xffi32))).await.unwrap();
+            mb.send((rs, StoreRequest::Set(BadKey::Bad, 0xffi32)))
+                .await
+                .unwrap();
             assert!(matches!(rr.await, Err(_)));
 
             // Set the key again and make sure that there was no prior key
             let (rs, rr) = oneshot::channel();
-            mb.send((rs, StoreRequest::Set(BadKey::Good(i), 0xffi32))).await.unwrap();
+            mb.send((rs, StoreRequest::Set(BadKey::Good(i), 0xffi32)))
+                .await
+                .unwrap();
             assert_eq!(Ok(None), rr.await);
         }
     }
@@ -256,10 +295,7 @@ mod tests {
                 mb.register(name);
                 (sys, h)
             };
-            h = supervise_multi(rr, vec![
-
-            ] );
-
+            h = supervise_multi(rr, vec![]);
         }
     }
 }

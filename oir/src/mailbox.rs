@@ -254,7 +254,6 @@ mod tests {
     use super::*;
     use crate::gensym::gensym;
 
-
     #[test]
     fn register_and_resolve() {
         let (ss, _) = mpsc::channel::<SystemMessage>(1);
