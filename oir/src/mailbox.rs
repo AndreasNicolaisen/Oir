@@ -200,6 +200,7 @@ pub enum ResolutionError {
     WrongType,
 }
 
+#[derive(Debug)]
 pub struct ActorDirectory {
     map: HashMap<String, Box<dyn Any + Sync + Send + 'static>>,
 }
@@ -234,7 +235,17 @@ impl ActorDirectory {
     where
         T: Send + Sync + 'static,
     {
-        ACTOR_DIRECTORY.read().unwrap().resolve_name(name)
+        ACTOR_DIRECTORY
+            .read()
+            .unwrap()
+            .resolve_name(name)
+            .and_then(|res| {
+                if res.1.is_closed() {
+                    Err(ResolutionError::NameNotFound)
+                } else {
+                    Ok(res)
+                }
+            })
     }
 
     fn register<T>(name: String, senders: (mpsc::Sender<SystemMessage>, mpsc::Sender<T>))
@@ -256,8 +267,8 @@ mod tests {
 
     #[test]
     fn register_and_resolve() {
-        let (ss, _) = mpsc::channel::<SystemMessage>(1);
-        let (sm, _) = mpsc::channel::<i32>(1);
+        let (ss, ssr) = mpsc::channel::<SystemMessage>(1);
+        let (sm, smr) = mpsc::channel::<i32>(1);
         let name = gensym();
         ActorDirectory::register(name.clone(), (ss, sm));
         ActorDirectory::resolve::<i32>(&name).unwrap();
@@ -325,8 +336,10 @@ mod tests {
 
         rm.close();
         assert!(matches!(
-            mailbox.send(2).await,
-            Err(MailboxSendError::SendError(mpsc::error::SendError(2)))
+            mailbox.send(2i32).await,
+            Err(MailboxSendError::ResolutionError(
+                ResolutionError::NameNotFound
+            ))
         ))
     }
 
