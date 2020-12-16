@@ -9,6 +9,8 @@ use tokio::sync::oneshot;
 
 use async_trait::async_trait;
 
+use std::collections::VecDeque;
+
 pub fn supervise_single<F>(
     mut rs: mpsc::Receiver<SystemMessage>,
     child_starter: F,
@@ -71,6 +73,7 @@ struct SupervisorState {
     >,
     system_senders: Vec<mpsc::Sender<SystemMessage>>,
     restart_strategy: RestartStrategy,
+    joins_queue: VecDeque<(usize, Result<(), tokio::task::JoinError>)>,
 }
 
 impl SupervisorState {
@@ -93,6 +96,7 @@ impl SupervisorState {
             starters,
             system_senders: Vec::new(),
             restart_strategy,
+            joins_queue: VecDeque::new(),
         };
         state.start_children();
         state
@@ -146,7 +150,7 @@ impl SupervisorState {
             Some((_, Ok(()))) => { /* Child died sucessfully */ }
             Some((i, Err(_))) => match self.restart_strategy {
                 RestartStrategy::OneForOne => {
-                    let _ = self.restart(i);
+                    let _ = self.start(i);
                 }
                 RestartStrategy::OneForAll => {
                     self.shutdown_children().await;
@@ -155,6 +159,14 @@ impl SupervisorState {
                 RestartStrategy::RestForOne => {}
             },
             _ => {}
+        }
+    }
+
+    async fn recv_joins(&mut self) -> Option<(usize, Result<(), tokio::task::JoinError>)> {
+        if let Some(res) = self.joins_queue.pop_front() {
+            Some(res)
+        } else {
+            self.join_receiver.recv().await
         }
     }
 }
@@ -208,7 +220,7 @@ pub fn supervise_multi(
                         _ => {}
                     }
                 },
-                child_res = state.join_receiver.recv() => {
+                child_res = state.recv_joins() => {
                     state.handle(child_res).await;
                 }
             }
