@@ -133,7 +133,7 @@ impl SupervisorState {
         self.system_senders.clear();
     }
 
-    fn restart(&mut self, i: usize) {
+    fn start(&mut self, i: usize) {
         assert!(i < self.starters.len());
 
         let js = self.join_sender.clone();
@@ -156,7 +156,29 @@ impl SupervisorState {
                     self.shutdown_children().await;
                     self.start_children();
                 }
-                RestartStrategy::RestForOne => {}
+                RestartStrategy::RestForOne => {
+                    for sender in &mut self.system_senders[i+1..] {
+                        let _ = sender.send(SystemMessage::Shutdown).await;
+                    }
+
+                    let mut receive_statuses = vec![false; self.system_senders.len() - (i+1)];
+
+                    while !receive_statuses.iter().all(|&b| b) {
+                        if let Some((n, j)) = self.join_receiver.recv().await {
+                            if n > i {
+                                receive_statuses[n - (i+1)] = true;
+                            } else {
+                                self.joins_queue.push_back((n, j));
+                            }
+                        } else {
+                            panic!("Joins receiver was closed");
+                        }
+                    }
+
+                    for n in i..self.system_senders.len() {
+                        let _ = self.start(n);
+                    }
+                }
             },
             _ => {}
         }
@@ -531,6 +553,97 @@ mod tests {
             assert_eq!(Ok(None), rr.await);
             let (rs, rr) = oneshot::channel::<Option<i32>>();
             mb1.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+        }
+    }
+
+    #[tokio::test]
+    async fn stactor_rest_for_one_supervisor_shutdown_test() {
+        let name0 = gensym();
+        let name1 = gensym();
+        let name2 = gensym();
+        let (rs, rr) = mpsc::channel::<SystemMessage>(512);
+        let h;
+        {
+            let starter = move |name| {
+                let (mb, h) = request_actor(Stactor::<BadKey, i32>::new());
+                let sys = mb.sys.clone();
+                mb.register(name);
+                (sys, h)
+            };
+            let name0 = name0.clone();
+            let name1 = name1.clone();
+            let name2 = name2.clone();
+            h = supervise_multi(
+                rr,
+                vec![
+                    Box::new(move || starter(name0.clone())),
+                    Box::new(move || starter(name1.clone())),
+                    Box::new(move || starter(name2.clone())),
+                ],
+                RestartStrategy::RestForOne,
+            );
+        }
+
+        let mut mb0 = NamedMailbox::new(name0);
+        let mut mb1 = NamedMailbox::new(name1);
+        let mut mb2 = NamedMailbox::new(name2);
+
+        while matches!(mb0.resolve(), Err(ResolutionError::NameNotFound))
+            || matches!(mb1.resolve(), Err(ResolutionError::NameNotFound))
+            || matches!(mb2.resolve(), Err(ResolutionError::NameNotFound))
+        {
+            tokio::task::yield_now().await;
+        }
+
+        {
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb0.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb1.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb2.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+        }
+
+        {
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb1.send((rs, StoreRequest::Set(BadKey::Bad, 0xffi32)))
+                .await
+                .unwrap();
+            assert!(matches!(rr.await, Err(_)));
+        }
+
+        while matches!(mb0.resolve(), Err(ResolutionError::NameNotFound))
+            || matches!(mb1.resolve(), Err(ResolutionError::NameNotFound))
+            || matches!(mb2.resolve(), Err(ResolutionError::NameNotFound))
+        {
+            tokio::task::yield_now().await;
+        }
+
+        {
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb0.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(Some(0xffi32)), rr.await);
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb1.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb2.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
                 .await
                 .unwrap();
             assert_eq!(Ok(None), rr.await);
