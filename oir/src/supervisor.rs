@@ -59,19 +59,27 @@ where
         }
     })
 }
+
+pub enum RestartPolicy {
+    Permanent,
+    Transient,
+    Temporary,
+}
+
 struct SupervisorState {
     shutdown: bool,
     join_sender: mpsc::Sender<(usize, Result<(), tokio::task::JoinError>)>,
     join_receiver: mpsc::Receiver<(usize, Result<(), tokio::task::JoinError>)>,
     starters: Vec<
         Box<
-            dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>)
+            dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
                 + std::marker::Send
                 + std::marker::Sync
                 + 'static,
         >,
     >,
     system_senders: Vec<mpsc::Sender<SystemMessage>>,
+    policies: Vec<RestartPolicy>,
     restart_strategy: RestartStrategy,
     joins_queue: VecDeque<(usize, Result<(), tokio::task::JoinError>)>,
 }
@@ -80,7 +88,7 @@ impl SupervisorState {
     fn new(
         starters: Vec<
             Box<
-                dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>)
+                dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
                     + std::marker::Send
                     + std::marker::Sync
                     + 'static,
@@ -95,6 +103,7 @@ impl SupervisorState {
             join_receiver: jr,
             starters,
             system_senders: Vec::new(),
+            policies: Vec::new(),
             restart_strategy,
             joins_queue: VecDeque::new(),
         };
@@ -104,19 +113,21 @@ impl SupervisorState {
 
     fn start_children(&mut self) {
         assert!(self.system_senders.is_empty());
-        self.system_senders = self
+        let (senders, policies) = self
             .starters
             .iter()
             .enumerate()
             .map(|(i, f)| {
                 let js = self.join_sender.clone();
-                let (sys, h) = f();
+                let (sys, h, rp) = f();
                 tokio::spawn(async move {
                     js.send((i, h.await)).await;
                 });
-                sys
+                (sys, rp)
             })
-            .collect();
+            .unzip();
+        self.system_senders = senders;
+        self.policies = policies;
     }
 
     async fn shutdown_children(&mut self) {
@@ -137,11 +148,12 @@ impl SupervisorState {
         assert!(i < self.starters.len());
 
         let js = self.join_sender.clone();
-        let (sys, h) = self.starters[i]();
+        let (sys, h, p) = self.starters[i]();
         // TODO: Make sure we shutdown the old one if it's not already dead
         tokio::spawn(async move {
             js.send((i, h.await)).await;
         });
+        self.policies[i] = p;
         self.system_senders[i] = sys;
     }
 
@@ -216,7 +228,7 @@ pub fn supervise_multi(
     mut rs: mpsc::Receiver<SystemMessage>,
     child_starters: Vec<
         Box<
-            dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>)
+            dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
                 + Send
                 + Sync
                 + 'static,
@@ -323,6 +335,17 @@ mod tests {
         assert_eq!(Ok(None), rr.await);
     }
 
+    fn starter<K, V>(name: String) -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
+    where
+        K: Send + Sync + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
+        V: Send + Sync + Clone + std::fmt::Debug + 'static,
+    {
+        let (mb, h) = request_actor(Stactor::<K, V>::new());
+        let sys = mb.sys.clone();
+        mb.register(name);
+        (sys, h, RestartPolicy::Transient)
+    }
+
     #[tokio::test]
     async fn stactor_supervisor_simple_multi_test() {
         let name0 = gensym();
@@ -330,19 +353,13 @@ mod tests {
         let (rs, rr) = mpsc::channel::<SystemMessage>(512);
         let h;
         {
-            let starter = move |name| {
-                let (mb, h) = request_actor(Stactor::<BadKey, i32>::new());
-                let sys = mb.sys.clone();
-                mb.register(name);
-                (sys, h)
-            };
             let name0 = name0.clone();
             let name1 = name1.clone();
             h = supervise_multi(
                 rr,
                 vec![
-                    Box::new(move || starter(name0.clone())),
-                    Box::new(move || starter(name1.clone())),
+                    Box::new(move || starter::<BadKey, i32>(name0.clone())),
+                    Box::new(move || starter::<BadKey, i32>(name1.clone())),
                 ],
                 RestartStrategy::OneForOne,
             );
@@ -394,20 +411,20 @@ mod tests {
         {
             let name = name.clone();
             let subsuper = move || {
-                let worker = move |name: String| {
-                    let (mb, h) = request_actor(Stactor::<i32, i32>::new());
-                    let sys = mb.sys.clone();
-                    mb.register(name.clone());
-                    (sys, h)
-                };
+                // let worker = move |name: String| {
+                //     let (mb, h) = request_actor(Stactor::<i32, i32>::new());
+                //     let sys = mb.sys.clone();
+                //     mb.register(name.clone());
+                //     (sys, h)
+                // };
                 let name = name.clone();
                 let (rs, rr) = mpsc::channel::<SystemMessage>(512);
                 let h = supervise_multi(
                     rr,
-                    vec![Box::new(move || worker(name.clone()))],
+                    vec![Box::new(move || starter::<i32, i32>(name.clone()))],
                     RestartStrategy::OneForOne,
                 );
-                (rs, h)
+                (rs, h, RestartPolicy::Transient,)
             };
             h = supervise_multi(rr, vec![Box::new(subsuper)], RestartStrategy::OneForOne);
         }
@@ -432,19 +449,13 @@ mod tests {
         let (rs, rr) = mpsc::channel::<SystemMessage>(512);
         let h;
         {
-            let starter = move |name| {
-                let (mb, h) = request_actor(Stactor::<i32, i32>::new());
-                let sys = mb.sys.clone();
-                mb.register(name);
-                (sys, h)
-            };
             let name0 = name0.clone();
             let name1 = name1.clone();
             h = supervise_multi(
                 rr,
                 vec![
-                    Box::new(move || starter(name0.clone())),
-                    Box::new(move || starter(name1.clone())),
+                    Box::new(move || starter::<i32, i32>(name0.clone())),
+                    Box::new(move || starter::<i32, i32>(name1.clone())),
                 ],
                 RestartStrategy::OneForOne,
             );
@@ -491,19 +502,13 @@ mod tests {
         let (rs, rr) = mpsc::channel::<SystemMessage>(512);
         let h;
         {
-            let starter = move |name| {
-                let (mb, h) = request_actor(Stactor::<BadKey, i32>::new());
-                let sys = mb.sys.clone();
-                mb.register(name);
-                (sys, h)
-            };
             let name0 = name0.clone();
             let name1 = name1.clone();
             h = supervise_multi(
                 rr,
                 vec![
-                    Box::new(move || starter(name0.clone())),
-                    Box::new(move || starter(name1.clone())),
+                    Box::new(move || starter::<BadKey, i32>(name0.clone())),
+                    Box::new(move || starter::<BadKey, i32>(name1.clone())),
                 ],
                 RestartStrategy::OneForAll,
             );
@@ -567,21 +572,15 @@ mod tests {
         let (rs, rr) = mpsc::channel::<SystemMessage>(512);
         let h;
         {
-            let starter = move |name| {
-                let (mb, h) = request_actor(Stactor::<BadKey, i32>::new());
-                let sys = mb.sys.clone();
-                mb.register(name);
-                (sys, h)
-            };
             let name0 = name0.clone();
             let name1 = name1.clone();
             let name2 = name2.clone();
             h = supervise_multi(
                 rr,
                 vec![
-                    Box::new(move || starter(name0.clone())),
-                    Box::new(move || starter(name1.clone())),
-                    Box::new(move || starter(name2.clone())),
+                    Box::new(move || starter::<BadKey, i32>(name0.clone())),
+                    Box::new(move || starter::<BadKey, i32>(name1.clone())),
+                    Box::new(move || starter::<BadKey, i32>(name2.clone())),
                 ],
                 RestartStrategy::RestForOne,
             );
