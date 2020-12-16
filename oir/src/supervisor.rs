@@ -60,11 +60,23 @@ where
     })
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RestartPolicy {
     Permanent,
     Transient,
     Temporary,
 }
+
+impl RestartPolicy {
+    fn should_restart(&self, abnormal_crash: bool) -> bool {
+        if RestartPolicy::Transient == *self {
+            abnormal_crash
+        } else {
+            RestartPolicy::Permanent == *self
+        }
+    }
+}
+
 
 struct SupervisorState {
     shutdown: bool,
@@ -78,7 +90,7 @@ struct SupervisorState {
                 + 'static,
         >,
     >,
-    system_senders: Vec<mpsc::Sender<SystemMessage>>,
+    system_senders: Vec<Option<mpsc::Sender<SystemMessage>>>,
     policies: Vec<RestartPolicy>,
     restart_strategy: RestartStrategy,
     joins_queue: VecDeque<(usize, Result<(), tokio::task::JoinError>)>,
@@ -123,7 +135,7 @@ impl SupervisorState {
                 tokio::spawn(async move {
                     js.send((i, h.await)).await;
                 });
-                (sys, rp)
+                (Some(sys), rp)
             })
             .unzip();
         self.system_senders = senders;
@@ -131,17 +143,16 @@ impl SupervisorState {
     }
 
     async fn shutdown_children(&mut self) {
-        for sender in &mut self.system_senders {
+        for sender in self.system_senders.iter_mut().filter_map(|s| s.as_mut()) {
             let _ = sender.send(SystemMessage::Shutdown).await;
         }
 
-        for sender in &mut self.system_senders {
-            while !sender.is_closed() {
-                self.join_receiver.recv().await.unwrap();
+        for i in 0..self.system_senders.len() {
+            while self.system_senders[i].as_ref().map_or(false, |s| !s.is_closed()) {
+                self.receive_from(i).await;
             }
+            self.system_senders[i] = None;
         }
-
-        self.system_senders.clear();
     }
 
     fn start(&mut self, i: usize) {
@@ -154,41 +165,78 @@ impl SupervisorState {
             js.send((i, h.await)).await;
         });
         self.policies[i] = p;
-        self.system_senders[i] = sys;
+        self.system_senders[i] = Some(sys);
+    }
+
+    async fn receive_from(&mut self, i: usize) -> Result<(), tokio::task::JoinError> {
+        loop {
+            match self.join_receiver.recv().await {
+                Some((j, jr)) if j == i => {
+                    return jr;
+                },
+                Some(x) => {
+                    self.joins_queue.push_back(x);
+                },
+                None => {
+                    panic!("Join receiver was closed");
+                }
+            }
+        }
     }
 
     async fn handle(&mut self, child_res: Option<(usize, Result<(), tokio::task::JoinError>)>) {
         match child_res {
-            Some((_, Ok(()))) => { /* Child died sucessfully */ }
-            Some((i, Err(_))) => match self.restart_strategy {
-                RestartStrategy::OneForOne => {
-                    let _ = self.start(i);
-                }
-                RestartStrategy::OneForAll => {
-                    self.shutdown_children().await;
-                    self.start_children();
-                }
-                RestartStrategy::RestForOne => {
-                    for sender in &mut self.system_senders[i+1..] {
-                        let _ = sender.send(SystemMessage::Shutdown).await;
-                    }
+            Some((i, je)) => {
+                let abnormal_crash = je.is_err();
+                let policy = self.policies[i];
 
-                    let mut receive_statuses = vec![false; self.system_senders.len() - (i+1)];
-
-                    while !receive_statuses.iter().all(|&b| b) {
-                        if let Some((n, j)) = self.join_receiver.recv().await {
-                            if n > i {
-                                receive_statuses[n - (i+1)] = true;
-                            } else {
-                                self.joins_queue.push_back((n, j));
-                            }
-                        } else {
-                            panic!("Joins receiver was closed");
+                match self.restart_strategy {
+                    RestartStrategy::OneForOne => {
+                        if policy.should_restart(abnormal_crash) {
+                            let _ = self.start(i);
                         }
                     }
+                    RestartStrategy::OneForAll => {
+                        self.shutdown_children().await;
 
-                    for n in i..self.system_senders.len() {
-                        let _ = self.start(n);
+                        for n in 0..self.starters.len() {
+                            // NOTE: We don't handle the case where a worker crashes
+                            // during shutdown, therefore its a normal shutdown.
+                            if self.policies[n].should_restart(false) {
+                                self.start(n);
+                            }
+                        }
+                    }
+                    RestartStrategy::RestForOne => {
+                        let mut receive_statuses = vec![false; self.system_senders.len() - (i+1)];
+
+                        for (i, sender) in self.system_senders[i+1..].iter_mut().enumerate() {
+                            if let Some(s) = sender {
+                                let _ = s.send(SystemMessage::Shutdown).await;
+                            } else {
+                                receive_statuses[i] = true;
+                            }
+                        }
+
+                        while !receive_statuses.iter().all(|&b| b) {
+                            if let Some((n, j)) = self.join_receiver.recv().await {
+                                if n > i {
+                                    receive_statuses[n - (i+1)] = true;
+                                } else {
+                                    self.joins_queue.push_back((n, j));
+                                }
+                            } else {
+                                panic!("Joins receiver was closed");
+                            }
+                        }
+
+                        for n in i..self.system_senders.len() {
+                            // NOTE: We don't handle the case where a worker crashes
+                            // during shutdown, therefore its a normal shutdown.
+                            if self.policies[n].should_restart(false) {
+                                let _ = self.start(n);
+                            }
+                        }
                     }
                 }
             },
@@ -212,7 +260,9 @@ impl Drop for SupervisorState {
         }
 
         for sys in &mut self.system_senders {
-            let _ = sys.try_send(SystemMessage::Shutdown);
+            if let Some(s) = sys {
+                let _ = s.try_send(SystemMessage::Shutdown);
+            }
         }
     }
 }
@@ -344,6 +394,17 @@ mod tests {
         let sys = mb.sys.clone();
         mb.register(name);
         (sys, h, RestartPolicy::Transient)
+    }
+
+    fn starterPermanent<K, V>(name: String) -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
+    where
+        K: Send + Sync + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
+        V: Send + Sync + Clone + std::fmt::Debug + 'static,
+    {
+        let (mb, h) = request_actor(Stactor::<K, V>::new());
+        let sys = mb.sys.clone();
+        mb.register(name);
+        (sys, h, RestartPolicy::Permanent)
     }
 
     #[tokio::test]
@@ -507,8 +568,8 @@ mod tests {
             h = supervise_multi(
                 rr,
                 vec![
-                    Box::new(move || starter::<BadKey, i32>(name0.clone())),
-                    Box::new(move || starter::<BadKey, i32>(name1.clone())),
+                    Box::new(move || starterPermanent::<BadKey, i32>(name0.clone())),
+                    Box::new(move || starterPermanent::<BadKey, i32>(name1.clone())),
                 ],
                 RestartStrategy::OneForAll,
             );
@@ -578,9 +639,9 @@ mod tests {
             h = supervise_multi(
                 rr,
                 vec![
-                    Box::new(move || starter::<BadKey, i32>(name0.clone())),
-                    Box::new(move || starter::<BadKey, i32>(name1.clone())),
-                    Box::new(move || starter::<BadKey, i32>(name2.clone())),
+                    Box::new(move || starterPermanent::<BadKey, i32>(name0.clone())),
+                    Box::new(move || starterPermanent::<BadKey, i32>(name1.clone())),
+                    Box::new(move || starterPermanent::<BadKey, i32>(name2.clone())),
                 ],
                 RestartStrategy::RestForOne,
             );
