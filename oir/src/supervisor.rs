@@ -59,21 +59,53 @@ where
 }
 struct SupervisorState {
     shutdown: bool,
-    joins: mpsc::Sender<(usize, Result<(), tokio::task::JoinError>)>,
-    starters: Vec<Box<dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) + std::marker::Send + std::marker::Sync + 'static>>,
+    join_sender: mpsc::Sender<(usize, Result<(), tokio::task::JoinError>)>,
+    join_receiver: mpsc::Receiver<(usize, Result<(), tokio::task::JoinError>)>,
+    starters: Vec<
+        Box<
+            dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>)
+                + std::marker::Send
+                + std::marker::Sync
+                + 'static,
+        >,
+    >,
     system_senders: Vec<mpsc::Sender<SystemMessage>>,
+    restart_strategy: RestartStrategy,
 }
 
 impl SupervisorState {
-    fn start_children(
-        joins: mpsc::Sender<(usize, Result<(), tokio::task::JoinError>)>,
-        starters: Vec<Box<dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) + std::marker::Send + std::marker::Sync + 'static>>)
-        -> SupervisorState {
-        let senders = starters
+    fn new(
+        starters: Vec<
+            Box<
+                dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>)
+                    + std::marker::Send
+                    + std::marker::Sync
+                    + 'static,
+            >,
+        >,
+        restart_strategy: RestartStrategy,
+    ) -> SupervisorState {
+        let (js, mut jr) = mpsc::channel(512);
+        let mut state = SupervisorState {
+            shutdown: false,
+            join_sender: js,
+            join_receiver: jr,
+            starters,
+            system_senders: Vec::new(),
+            restart_strategy,
+        };
+        state.start_children();
+        state
+    }
+
+    fn start_children(&mut self) {
+        assert!(self.system_senders.is_empty());
+        self.system_senders = self
+            .starters
             .iter()
             .enumerate()
             .map(|(i, f)| {
-                let js = joins.clone();
+                let js = self.join_sender.clone();
                 let (sys, h) = f();
                 tokio::spawn(async move {
                     js.send((i, h.await)).await;
@@ -81,36 +113,49 @@ impl SupervisorState {
                 sys
             })
             .collect();
-        SupervisorState {
-            shutdown: false,
-            joins,
-            starters,
-            system_senders: senders,
-        }
     }
 
-    async fn shutdown_children(mut self, mut joins: mpsc::Receiver<(usize, Result<(), tokio::task::JoinError>)>) {
+    async fn shutdown_children(&mut self) {
         for sender in &mut self.system_senders {
             let _ = sender.send(SystemMessage::Shutdown).await;
         }
 
         for sender in &mut self.system_senders {
             while !sender.is_closed() {
-                joins.recv().await.unwrap();
+                self.join_receiver.recv().await.unwrap();
             }
         }
+
+        self.system_senders.clear();
     }
 
-    fn restart(&mut self, i : usize) {
+    fn restart(&mut self, i: usize) {
         assert!(i < self.starters.len());
 
-        let js = self.joins.clone();
+        let js = self.join_sender.clone();
         let (sys, h) = self.starters[i]();
         // TODO: Make sure we shutdown the old one if it's not already dead
         tokio::spawn(async move {
             js.send((i, h.await)).await;
         });
         self.system_senders[i] = sys;
+    }
+
+    async fn handle(&mut self, child_res: Option<(usize, Result<(), tokio::task::JoinError>)>) {
+        match child_res {
+            Some((_, Ok(()))) => { /* Child died sucessfully */ }
+            Some((i, Err(_))) => match self.restart_strategy {
+                RestartStrategy::OneForOne => {
+                    let _ = self.restart(i);
+                }
+                RestartStrategy::OneForAll => {
+                    self.shutdown_children().await;
+                    self.start_children();
+                }
+                RestartStrategy::RestForOne => {}
+            },
+            _ => {}
+        }
     }
 }
 
@@ -126,6 +171,13 @@ impl Drop for SupervisorState {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum RestartStrategy {
+    OneForOne,
+    OneForAll,
+    RestForOne,
+}
+
 pub fn supervise_multi(
     mut rs: mpsc::Receiver<SystemMessage>,
     child_starters: Vec<
@@ -136,13 +188,12 @@ pub fn supervise_multi(
                 + 'static,
         >,
     >,
+    restart_strategy: RestartStrategy,
 ) -> tokio::task::JoinHandle<()> {
     use crate::request_handler::{request_actor, Stactor, StoreRequest};
 
-
     tokio::spawn(async move {
-        let (js, mut joins) = mpsc::channel(512);
-        let mut state = SupervisorState::start_children(js, child_starters);
+        let mut state = SupervisorState::new(child_starters, restart_strategy);
 
         let reason;
         'outer: loop {
@@ -151,21 +202,14 @@ pub fn supervise_multi(
                     match sys_msg {
                         Some(SystemMessage::Shutdown) => {
                             reason = ShutdownReason::Shutdown;
-                            state.shutdown_children(joins).await;
+                            state.shutdown_children().await;
                             break 'outer;
                         },
                         _ => {}
                     }
                 },
-                child_res = joins.recv() => {
-                    match child_res {
-                        Some((_, Ok(()))) => { /* Child died sucessfully */ },
-                        Some((i, Err(_))) => {
-                            // TODO: Add restart limit
-                            let _ = state.restart(i);
-                        },
-                        _ => {}
-                    }
+                child_res = state.join_receiver.recv() => {
+                    state.handle(child_res).await;
                 }
             }
         }
@@ -266,6 +310,7 @@ mod tests {
                     Box::new(move || starter(name0.clone())),
                     Box::new(move || starter(name1.clone())),
                 ],
+                RestartStrategy::OneForOne,
             );
         }
         for (i, name) in [name0, name1].into_iter().enumerate() {
@@ -323,10 +368,14 @@ mod tests {
                 };
                 let name = name.clone();
                 let (rs, rr) = mpsc::channel::<SystemMessage>(512);
-                let h = supervise_multi(rr, vec![Box::new(move || worker(name.clone()))]);
+                let h = supervise_multi(
+                    rr,
+                    vec![Box::new(move || worker(name.clone()))],
+                    RestartStrategy::OneForOne,
+                );
                 (rs, h)
             };
-            h = supervise_multi(rr, vec![Box::new(subsuper)]);
+            h = supervise_multi(rr, vec![Box::new(subsuper)], RestartStrategy::OneForOne);
         }
 
         let mut mb = NamedMailbox::new(name.clone());
@@ -363,15 +412,16 @@ mod tests {
                     Box::new(move || starter(name0.clone())),
                     Box::new(move || starter(name1.clone())),
                 ],
+                RestartStrategy::OneForOne,
             );
         }
 
         let mut mb0 = NamedMailbox::new(name0);
         let mut mb1 = NamedMailbox::new(name1);
 
-        while matches!(mb0.resolve(), Err(ResolutionError::NameNotFound)) ||
-              matches!(mb1.resolve(), Err(ResolutionError::NameNotFound)) {
-
+        while matches!(mb0.resolve(), Err(ResolutionError::NameNotFound))
+            || matches!(mb1.resolve(), Err(ResolutionError::NameNotFound))
+        {
             tokio::task::yield_now().await;
         }
 
@@ -393,7 +443,85 @@ mod tests {
 
         {
             let (rs, rr) = oneshot::channel::<Option<i32>>();
-            assert!(matches!(mb0.send((rs, StoreRequest::Set(0i32, 1i32))).await, Err(_)));
+            assert!(matches!(
+                mb0.send((rs, StoreRequest::Set(0i32, 1i32))).await,
+                Err(_)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn stactor_one_for_all_supervisor_shutdown_test() {
+        let name0 = gensym();
+        let name1 = gensym();
+        let (rs, rr) = mpsc::channel::<SystemMessage>(512);
+        let h;
+        {
+            let starter = move |name| {
+                let (mb, h) = request_actor(Stactor::<BadKey, i32>::new());
+                let sys = mb.sys.clone();
+                mb.register(name);
+                (sys, h)
+            };
+            let name0 = name0.clone();
+            let name1 = name1.clone();
+            h = supervise_multi(
+                rr,
+                vec![
+                    Box::new(move || starter(name0.clone())),
+                    Box::new(move || starter(name1.clone())),
+                ],
+                RestartStrategy::OneForAll,
+            );
+        }
+
+        let mut mb0 = NamedMailbox::new(name0);
+        let mut mb1 = NamedMailbox::new(name1);
+
+        while matches!(mb0.resolve(), Err(ResolutionError::NameNotFound))
+            || matches!(mb1.resolve(), Err(ResolutionError::NameNotFound))
+        {
+            tokio::task::yield_now().await;
+        }
+
+        {
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb0.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb1.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+        }
+
+        {
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb0.send((rs, StoreRequest::Set(BadKey::Bad, 0xffi32)))
+                .await
+                .unwrap();
+            assert!(matches!(rr.await, Err(_)));
+        }
+
+        while matches!(mb0.resolve(), Err(ResolutionError::NameNotFound))
+            || matches!(mb1.resolve(), Err(ResolutionError::NameNotFound))
+        {
+            tokio::task::yield_now().await;
+        }
+
+        {
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb0.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+            let (rs, rr) = oneshot::channel::<Option<i32>>();
+            mb1.send((rs, StoreRequest::Set(BadKey::Good(0i32), 0xffi32)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
         }
     }
 }
