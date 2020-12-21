@@ -275,7 +275,6 @@ pub enum RestartStrategy {
 }
 
 pub fn supervise_multi(
-    mut rs: mpsc::Receiver<SystemMessage>,
     child_starters: Vec<
         Box<
             dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
@@ -285,10 +284,12 @@ pub fn supervise_multi(
         >,
     >,
     restart_strategy: RestartStrategy,
-) -> tokio::task::JoinHandle<()> {
+) -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) {
     use crate::request_handler::{request_actor, Stactor, StoreRequest};
 
-    tokio::spawn(async move {
+    let (ss, mut rs) = mpsc::channel(512);
+
+    let h = tokio::spawn(async move {
         let mut state = SupervisorState::new(child_starters, restart_strategy);
 
         let reason;
@@ -309,7 +310,9 @@ pub fn supervise_multi(
                 }
             }
         }
-    })
+    });
+
+    (ss, h)
 }
 
 #[cfg(test)]
@@ -411,20 +414,18 @@ mod tests {
     async fn stactor_supervisor_simple_multi_test() {
         let name0 = gensym();
         let name1 = gensym();
-        let (rs, rr) = mpsc::channel::<SystemMessage>(512);
-        let h;
+        let (rs, h) =
         {
             let name0 = name0.clone();
             let name1 = name1.clone();
-            h = supervise_multi(
-                rr,
+            supervise_multi(
                 vec![
                     Box::new(move || starter::<BadKey, i32>(name0.clone())),
                     Box::new(move || starter::<BadKey, i32>(name1.clone())),
                 ],
                 RestartStrategy::OneForOne,
-            );
-        }
+            )
+        };
         for (i, name) in [name0, name1].into_iter().enumerate() {
             let i = i as i32;
             let mut mb = NamedMailbox::new(name.clone());
@@ -468,7 +469,7 @@ mod tests {
     async fn nested_supervisor_test() {
         let name = gensym();
         let (rs, rr) = mpsc::channel::<SystemMessage>(512);
-        let h;
+        let h =
         {
             let name = name.clone();
             let subsuper = move || {
@@ -479,16 +480,14 @@ mod tests {
                 //     (sys, h)
                 // };
                 let name = name.clone();
-                let (rs, rr) = mpsc::channel::<SystemMessage>(512);
-                let h = supervise_multi(
-                    rr,
+                let (rs, h) = supervise_multi(
                     vec![Box::new(move || starter::<i32, i32>(name.clone()))],
                     RestartStrategy::OneForOne,
                 );
                 (rs, h, RestartPolicy::Transient,)
             };
-            h = supervise_multi(rr, vec![Box::new(subsuper)], RestartStrategy::OneForOne);
-        }
+            supervise_multi(vec![Box::new(subsuper)], RestartStrategy::OneForOne)
+        };
 
         let mut mb = NamedMailbox::new(name.clone());
 
@@ -507,20 +506,18 @@ mod tests {
     async fn stactor_supervisor_shutdown_test() {
         let name0 = gensym();
         let name1 = gensym();
-        let (rs, rr) = mpsc::channel::<SystemMessage>(512);
-        let h;
+        let (rs, h) =
         {
             let name0 = name0.clone();
             let name1 = name1.clone();
-            h = supervise_multi(
-                rr,
+            supervise_multi(
                 vec![
                     Box::new(move || starter::<i32, i32>(name0.clone())),
                     Box::new(move || starter::<i32, i32>(name1.clone())),
                 ],
                 RestartStrategy::OneForOne,
-            );
-        }
+            )
+        };
 
         let mut mb0 = NamedMailbox::new(name0);
         let mut mb1 = NamedMailbox::new(name1);
@@ -560,20 +557,18 @@ mod tests {
     async fn stactor_one_for_all_supervisor_shutdown_test() {
         let name0 = gensym();
         let name1 = gensym();
-        let (rs, rr) = mpsc::channel::<SystemMessage>(512);
-        let h;
+        let (rs, h) =
         {
             let name0 = name0.clone();
             let name1 = name1.clone();
-            h = supervise_multi(
-                rr,
+            supervise_multi(
                 vec![
                     Box::new(move || starterPermanent::<BadKey, i32>(name0.clone())),
                     Box::new(move || starterPermanent::<BadKey, i32>(name1.clone())),
                 ],
                 RestartStrategy::OneForAll,
-            );
-        }
+            )
+        };
 
         let mut mb0 = NamedMailbox::new(name0);
         let mut mb1 = NamedMailbox::new(name1);
@@ -630,22 +625,20 @@ mod tests {
         let name0 = gensym();
         let name1 = gensym();
         let name2 = gensym();
-        let (rs, rr) = mpsc::channel::<SystemMessage>(512);
-        let h;
+        let (rs, h) =
         {
             let name0 = name0.clone();
             let name1 = name1.clone();
             let name2 = name2.clone();
-            h = supervise_multi(
-                rr,
+            supervise_multi(
                 vec![
                     Box::new(move || starterPermanent::<BadKey, i32>(name0.clone())),
                     Box::new(move || starterPermanent::<BadKey, i32>(name1.clone())),
                     Box::new(move || starterPermanent::<BadKey, i32>(name2.clone())),
                 ],
                 RestartStrategy::RestForOne,
-            );
-        }
+            )
+        };
 
         let mut mb0 = NamedMailbox::new(name0);
         let mut mb1 = NamedMailbox::new(name1);
