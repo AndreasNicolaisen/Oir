@@ -63,7 +63,7 @@ where
 
 #[derive(Debug)]
 pub struct NamedMailbox<T> {
-    senders: Option<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>)>,
+    pub senders: Option<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>)>,
     name: String,
 }
 

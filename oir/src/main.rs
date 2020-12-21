@@ -11,6 +11,7 @@ mod mailbox;
 mod message_handler;
 mod request_handler;
 mod supervisor;
+mod examples;
 
 use crate::message_handler::message_actor;
 use crate::message_handler::PingActor;
