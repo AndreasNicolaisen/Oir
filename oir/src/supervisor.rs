@@ -1,7 +1,7 @@
 use crate::actor::ErrorBox;
 use crate::actor::ShutdownReason;
 use crate::actor::SystemMessage;
-use crate::mailbox::{Mailbox, UnnamedMailbox};
+use crate::mailbox::{Mailbox, UnnamedMailbox, DynamicMailbox};
 
 use tokio;
 use tokio::sync::mpsc;
@@ -84,13 +84,13 @@ struct SupervisorState {
     join_receiver: mpsc::Receiver<(usize, Result<(), tokio::task::JoinError>)>,
     starters: Vec<
         Box<
-            dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
+            dyn Fn() -> (DynamicMailbox, tokio::task::JoinHandle<()>, RestartPolicy)
                 + std::marker::Send
                 + std::marker::Sync
                 + 'static,
         >,
     >,
-    system_senders: Vec<Option<mpsc::Sender<SystemMessage>>>,
+    system_senders: Vec<Option<DynamicMailbox>>,
     policies: Vec<RestartPolicy>,
     restart_strategy: RestartStrategy,
     joins_queue: VecDeque<(usize, Result<(), tokio::task::JoinError>)>,
@@ -100,7 +100,7 @@ impl SupervisorState {
     fn new(
         starters: Vec<
             Box<
-                dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
+                dyn Fn() -> (DynamicMailbox, tokio::task::JoinHandle<()>, RestartPolicy)
                     + std::marker::Send
                     + std::marker::Sync
                     + 'static,
@@ -131,11 +131,11 @@ impl SupervisorState {
             .enumerate()
             .map(|(i, f)| {
                 let js = self.join_sender.clone();
-                let (sys, h, rp) = f();
+                let (mb, h, rp) = f();
                 tokio::spawn(async move {
                     js.send((i, h.await)).await;
                 });
-                (Some(sys), rp)
+                (Some(mb), rp)
             })
             .unzip();
         self.system_senders = senders;
@@ -144,7 +144,7 @@ impl SupervisorState {
 
     async fn shutdown_children(&mut self) {
         for sender in self.system_senders.iter_mut().filter_map(|s| s.as_mut()) {
-            let _ = sender.send(SystemMessage::Shutdown).await;
+            let _ = sender.send_system(SystemMessage::Shutdown).await;
         }
 
         for i in 0..self.system_senders.len() {
@@ -212,7 +212,7 @@ impl SupervisorState {
 
                         for (i, sender) in self.system_senders[i+1..].iter_mut().enumerate() {
                             if let Some(s) = sender {
-                                let _ = s.send(SystemMessage::Shutdown).await;
+                                let _ = s.send_system(SystemMessage::Shutdown).await;
                             } else {
                                 receive_statuses[i] = true;
                             }
@@ -261,7 +261,7 @@ impl Drop for SupervisorState {
 
         for sys in &mut self.system_senders {
             if let Some(s) = sys {
-                let _ = s.try_send(SystemMessage::Shutdown);
+                let _ = s.try_send_system(SystemMessage::Shutdown);
             }
         }
     }
@@ -277,17 +277,18 @@ pub enum RestartStrategy {
 pub fn supervise_multi(
     child_starters: Vec<
         Box<
-            dyn Fn() -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
+            dyn Fn() -> (DynamicMailbox, tokio::task::JoinHandle<()>, RestartPolicy)
                 + Send
                 + Sync
                 + 'static,
         >,
     >,
     restart_strategy: RestartStrategy,
-) -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) {
+) -> (DynamicMailbox, tokio::task::JoinHandle<()>) {
     use crate::request_handler::{request_actor, Stactor, StoreRequest};
 
     let (ss, mut rs) = mpsc::channel(512);
+    let (sups, mut supr) = mpsc::channel::<()>(512);
 
     let h = tokio::spawn(async move {
         let mut state = SupervisorState::new(child_starters, restart_strategy);
@@ -312,7 +313,7 @@ pub fn supervise_multi(
         }
     });
 
-    (ss, h)
+    (DynamicMailbox::new(ss, sups), h)
 }
 
 #[cfg(test)]
@@ -388,26 +389,26 @@ mod tests {
         assert_eq!(Ok(None), rr.await);
     }
 
-    fn starter<K, V>(name: String) -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
+    fn starter<K, V>(name: String) -> (DynamicMailbox, tokio::task::JoinHandle<()>, RestartPolicy)
     where
         K: Send + Sync + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
         V: Send + Sync + Clone + std::fmt::Debug + 'static,
     {
         let (mb, h) = request_actor(Stactor::<K, V>::new());
-        let sys = mb.sys.clone();
+        let dmb = mb.clone().into();
         mb.register(name);
-        (sys, h, RestartPolicy::Transient)
+        (dmb, h, RestartPolicy::Transient)
     }
 
-    fn starterPermanent<K, V>(name: String) -> (mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>, RestartPolicy)
+    fn starterPermanent<K, V>(name: String) -> (DynamicMailbox, tokio::task::JoinHandle<()>, RestartPolicy)
     where
         K: Send + Sync + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
         V: Send + Sync + Clone + std::fmt::Debug + 'static,
     {
         let (mb, h) = request_actor(Stactor::<K, V>::new());
-        let sys = mb.sys.clone();
+        let dmb = mb.clone().into();
         mb.register(name);
-        (sys, h, RestartPolicy::Permanent)
+        (dmb, h, RestartPolicy::Permanent)
     }
 
     #[tokio::test]
@@ -506,7 +507,7 @@ mod tests {
     async fn stactor_supervisor_shutdown_test() {
         let name0 = gensym();
         let name1 = gensym();
-        let (rs, h) =
+        let (mut rs, h) =
         {
             let name0 = name0.clone();
             let name1 = name1.clone();
@@ -541,7 +542,7 @@ mod tests {
             assert_eq!(Ok(None), rr.await);
         }
 
-        rs.send(SystemMessage::Shutdown).await.unwrap();
+        rs.send_system(SystemMessage::Shutdown).await.unwrap();
         h.await;
 
         {

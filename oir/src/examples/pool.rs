@@ -12,7 +12,9 @@ use crate::supervisor::*;
 pub const POOL_SERV_NAME: &'static str = "pool_serv";
 
 struct PoolServActor;
+#[derive(Clone)]
 struct WorkItem;
+#[derive(Clone)]
 enum WorkResult {
     Started,
     Completed,
@@ -62,13 +64,13 @@ trait Actor {
 
 struct ChildSpec {
     policy: RestartPolicy,
-    sender: mpsc::Sender<SystemMessage>,
+    sender: DynamicMailbox,
     starter: Box<dyn Fn() -> () + std::marker::Send + std::marker::Sync + 'static>,
 }
 
 fn child<A: Actor>(
     r: RestartPolicy,
-    s: mpsc::Sender<SystemMessage>,
+    s: DynamicMailbox,
     b: <A as Actor>::Arg,
 ) -> ChildSpec {
     ChildSpec {
@@ -83,32 +85,32 @@ fn child<A: Actor>(
 // supervisor_tree! {
 //     AllForOne,
 //     [
-//         permanent PoolServActor "WOw" {},
 //         permanent Supervisor {
 //             OneForOne,
 //             [
 //                 permenent PoolWorker {},
 //                 ...
 //             ]
-//         }
+//         },
+//         permanent PoolServActor "WOw" {},
 //     ]
 // };
 
-fn pool(num_workers: usize) -> (tokio::sync::mpsc::Sender<SystemMessage>, tokio::task::JoinHandle<()>) {
+fn pool(num_workers: usize) -> (DynamicMailbox, tokio::task::JoinHandle<()>) {
     supervise_multi(
         vec![
             Box::new(move || {
                 let (mb, h) = request_actor(PoolServActor::new());
-                let rs = mb.sys.clone();
+                let dmb = DynamicMailbox::from(mb.clone());
                 mb.register(POOL_SERV_NAME.to_owned());
-                (rs, h, RestartPolicy::Permanent)
+                (dmb, h, RestartPolicy::Permanent)
             }),
             Box::new(move || {
                 let mut worker_spec = Vec::new();
                 for i in 0..num_workers {
                     let b: Box<
                         dyn Fn() -> (
-                                tokio::sync::mpsc::Sender<SystemMessage>,
+                                DynamicMailbox,
                                 tokio::task::JoinHandle<()>,
                                 RestartPolicy,
                             ) + Send
@@ -116,8 +118,7 @@ fn pool(num_workers: usize) -> (tokio::sync::mpsc::Sender<SystemMessage>, tokio:
                             + 'static,
                     > = Box::new(move || {
                         let (mb, h) = request_actor(PoolServActor::new());
-                        let rs: mpsc::Sender<SystemMessage> = mb.sys.clone();
-                        (rs, h, RestartPolicy::Permanent)
+                        (mb.into(), h, RestartPolicy::Permanent)
                     });
                     worker_spec.push(b);
                 }

@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 pub enum MailboxSendError<T> {
     ResolutionError(ResolutionError),
     SendError(mpsc::error::SendError<T>),
+    TypeError,
 }
 
 impl<T> From<ResolutionError> for MailboxSendError<T> {
@@ -37,6 +38,7 @@ impl<T> fmt::Display for MailboxSendError<T> {
             match self {
                 ResolutionError(_) => "could not resolve name",
                 SendError(_) => "channel closed",
+                TypeError => "message type is invalid for this mailbox"
             }
         )
     }
@@ -59,6 +61,8 @@ where
     async fn shutdown(&mut self) -> Result<(), MailboxSendError<SystemMessage>> {
         self.send_system(SystemMessage::Shutdown).await
     }
+
+    fn is_closed(&self) -> bool;
 }
 
 #[derive(Debug)]
@@ -128,6 +132,14 @@ where
 
         Ok(sys_s.send(msg).await?)
     }
+
+    fn is_closed(&self) -> bool {
+        if let Some((a, b)) = &self.senders {
+            a.is_closed() || b.is_closed()
+        } else {
+            true
+        }
+    }
 }
 
 impl<T> Clone for NamedMailbox<T>
@@ -180,6 +192,10 @@ where
     ) -> Result<(), MailboxSendError<SystemMessage>> {
         Ok(self.sys.send(msg).await?)
     }
+
+    fn is_closed(&self) -> bool {
+        self.sys.is_closed() || self.msg.is_closed()
+    }
 }
 
 impl<T> Clone for UnnamedMailbox<T>
@@ -193,6 +209,79 @@ where
         }
     }
 }
+
+
+pub struct DynamicMailbox {
+    msg: Box<dyn Any + Send + Sync + 'static>,
+    sys: mpsc::Sender<SystemMessage>,
+}
+
+impl DynamicMailbox {
+    pub fn new<T: Send + Sync + 'static>(sys: mpsc::Sender<SystemMessage>, msg: mpsc::Sender<T>) -> DynamicMailbox {
+        DynamicMailbox {
+            msg: Box::new(msg),
+            sys
+        }
+    }
+
+    pub async fn send_system(
+        &mut self,
+        msg: SystemMessage,
+    ) -> Result<(), MailboxSendError<SystemMessage>> {
+        Ok(self.sys.send(msg).await?)
+    }
+
+    pub fn try_send_system(&mut self, msg: SystemMessage) -> bool {
+        self.sys.try_send(msg).is_ok()
+    }
+
+    pub fn into_typed<T: Send + Sync + 'static>(self) -> Result<UnnamedMailbox<T>, DynamicMailbox> {
+        let DynamicMailbox { mut msg, sys } = self;
+        if let Some(mb) = msg.downcast_mut::<mpsc::Sender<T>>() {
+            return Ok(UnnamedMailbox::new(sys, mb.clone()));
+        }
+
+        Err(DynamicMailbox { msg, sys })
+    }
+
+    pub fn is_closed(&self) -> bool {
+        // NOTE: We don't check msg because we don't know its actual type here
+        self.sys.is_closed()
+    }
+}
+
+impl<T> From<UnnamedMailbox<T>> for DynamicMailbox
+where T: Send + Sync + 'static {
+    fn from(x: UnnamedMailbox<T>) -> Self {
+        DynamicMailbox::new(x.sys, x.msg)
+    }
+}
+
+// #[async_trait]
+// impl<T> Mailbox<T> for DynamicMailbox
+// where T: Clone + Sync + Send + 'static {
+
+//     async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
+//         if let Some(mb) = self.msg.downcast_mut::<mpsc::Sender<T>>() {
+//             Ok(mb.send(msg).await?)
+//         } else {
+//             Err(MailboxSendError::TypeError)
+//         }
+//     }
+
+//     async fn send_system(
+//         &mut self,
+//         msg: SystemMessage,
+//     ) -> Result<(), MailboxSendError<SystemMessage>> {
+//         Ok(self.sys.send(msg).await?)
+//     }
+
+
+//     fn is_closed(&self) -> bool {
+//         // NOTE: We don't check msg because we don't know its actual type here
+//         self.sys.is_closed()
+//     }
+// }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ResolutionError {
@@ -265,7 +354,6 @@ mod tests {
     use super::*;
     use crate::gensym::gensym;
 
-    #[test]
     fn register_and_resolve() {
         let (ss, ssr) = mpsc::channel::<SystemMessage>(1);
         let (sm, smr) = mpsc::channel::<i32>(1);
