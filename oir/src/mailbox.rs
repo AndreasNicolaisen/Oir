@@ -1,8 +1,9 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::error;
 use std::fmt;
 use std::sync::RwLock;
+use std::mem;
 
 use crate::actor::SystemMessage;
 
@@ -211,16 +212,47 @@ where
 }
 
 
+#[derive(Debug)]
 pub struct DynamicMailbox {
-    msg: Box<dyn Any + Send + Sync + 'static>,
+    type_id: TypeId,
+    raw_sender: *mut u8,
+    dropper: fn (*mut u8),
+    cloner: fn (*mut u8) -> *mut u8,
     sys: mpsc::Sender<SystemMessage>,
 }
 
+unsafe impl Send for DynamicMailbox {}
+unsafe impl Sync for DynamicMailbox {}
+
 impl DynamicMailbox {
     pub fn new<T: Send + Sync + 'static>(sys: mpsc::Sender<SystemMessage>, msg: mpsc::Sender<T>) -> DynamicMailbox {
-        DynamicMailbox {
-            msg: Box::new(msg),
-            sys
+        fn drop_it<U>(raw: *mut u8) {
+            unsafe {
+                let _ = Box::from_raw(mem::transmute::<*mut u8, *mut mpsc::Sender<U>>(raw));
+            }
+        }
+
+        fn clone_it<U>(src: *mut u8) -> *mut u8 {
+            unsafe {
+                let b_src = Box::from_raw(mem::transmute::<*mut u8, *mut mpsc::Sender<U>>(src));
+                let b_dst = b_src.clone();
+                // Forget the original box because it's still actually owned by the
+                // dynamic mailbox and should not be dropped here
+                mem::forget(b_src);
+                mem::transmute(Box::into_raw(b_dst))
+            }
+        }
+
+        unsafe {
+            let raw = Box::into_raw(Box::new(msg));
+
+            DynamicMailbox {
+                type_id: TypeId::of::<T>(),
+                raw_sender: mem::transmute(raw),
+                dropper: drop_it::<T>,
+                cloner: clone_it::<T>,
+                sys
+            }
         }
     }
 
@@ -235,13 +267,19 @@ impl DynamicMailbox {
         self.sys.try_send(msg).is_ok()
     }
 
-    pub fn into_typed<T: Send + Sync + 'static>(self) -> Result<UnnamedMailbox<T>, DynamicMailbox> {
-        let DynamicMailbox { mut msg, sys } = self;
-        if let Some(mb) = msg.downcast_mut::<mpsc::Sender<T>>() {
-            return Ok(UnnamedMailbox::new(sys, mb.clone()));
+    pub fn into_typed<T: Send + Sync + 'static>(mut self) -> Result<UnnamedMailbox<T>, DynamicMailbox> {
+        if self.type_id == TypeId::of::<T>() {
+            let mut raw_sender = std::ptr::null_mut();
+            mem::swap(&mut self.raw_sender, &mut raw_sender);
+
+            let mb: Box<mpsc::Sender<T>>;
+            unsafe {
+                mb = Box::from_raw(mem::transmute::<_, *mut mpsc::Sender<T>>(raw_sender));
+            }
+            return Ok(UnnamedMailbox::new(self.sys.clone(), *mb));
         }
 
-        Err(DynamicMailbox { msg, sys })
+        Err(self)
     }
 
     pub fn is_closed(&self) -> bool {
@@ -256,6 +294,32 @@ where T: Send + Sync + 'static {
         DynamicMailbox::new(x.sys, x.msg)
     }
 }
+
+impl Drop for DynamicMailbox {
+    fn drop(&mut self) {
+        if self.raw_sender.is_null() {
+            return;
+        }
+        // Drop the allocation
+        unsafe {
+            (self.dropper)(self.raw_sender);
+        }
+        self.raw_sender = std::ptr::null_mut();
+    }
+}
+
+impl Clone for DynamicMailbox {
+    fn clone(&self) -> Self {
+        DynamicMailbox {
+            sys: self.sys.clone(),
+            raw_sender: (self.cloner)(self.raw_sender),
+            type_id: self.type_id,
+            cloner: self.cloner,
+            dropper: self.dropper,
+        }
+    }
+}
+
 
 // #[async_trait]
 // impl<T> Mailbox<T> for DynamicMailbox
@@ -490,5 +554,74 @@ mod tests {
         named_mailbox.send(1).await.unwrap();
 
         assert_eq!(1, rm1.recv().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn dynamic_mailbox_drop_safe() {
+        let (s, mut r) = mpsc::channel::<i32>(2);
+        let (ss, sr) = mpsc::channel::<SystemMessage>(2);
+        let mb = DynamicMailbox::new(ss, s.clone());
+        // Make sure creating a dynamic mailbox doesn't break the channel
+        s.send(3).await;
+        assert_eq!(r.recv().await, Some(3));
+        // Drop the typed channel, and make sure the channel is still open
+        // (because of dynamic mailbox)
+        drop(s);
+        assert_eq!(r.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        drop(mb);
+        assert_eq!(r.try_recv(), Err(mpsc::error::TryRecvError::Closed));
+    }
+
+    #[tokio::test]
+    async fn dynamic_mailbox_into_typed_safe() {
+        let (s, mut r) = mpsc::channel::<i32>(2);
+        let (ss, sr) = mpsc::channel::<SystemMessage>(2);
+        let mb = DynamicMailbox::new(ss, s.clone());
+        // Make sure creating a dynamic mailbox doesn't break the channel
+        s.send(3).await;
+        assert_eq!(r.recv().await, Some(3));
+        drop(s);
+        assert_eq!(r.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        // Make sure that casting back into a typed channel keeps it alive
+        // (and doesn't crash heh)
+        let mut v;
+        if let Ok(_v) = mb.into_typed::<i32>() {
+            v = _v;
+        } else {
+            panic!("Expect dynamic to typed mailbox conversion to succeed");
+        }
+
+        v.send(1).await;
+        assert_eq!(r.recv().await, Some(1));
+        drop(v);
+        assert_eq!(r.try_recv(), Err(mpsc::error::TryRecvError::Closed));
+    }
+
+    #[tokio::test]
+    async fn dynamic_mailbox_wrong_type() {
+        let (s, mut r) = mpsc::channel::<i32>(2);
+        let (ss, sr) = mpsc::channel::<SystemMessage>(2);
+        let mb = DynamicMailbox::new(ss, s.clone());
+        assert!(mb.into_typed::<bool>().is_err());
+    }
+
+    #[tokio::test]
+    async fn dynamic_mailbox_clone_safe() {
+        let (s, mut r) = mpsc::channel::<i32>(2);
+        let (ss, sr) = mpsc::channel::<SystemMessage>(2);
+        let mb0 = DynamicMailbox::new(ss, s.clone());
+        // Make sure creating a dynamic mailbox doesn't break the channel
+        s.send(3).await;
+        assert_eq!(r.recv().await, Some(3));
+        // Drop the typed channel, and make sure the channel is still open
+        // (because of dynamic mailbox)
+        drop(s);
+        assert_eq!(r.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        let mb1 = mb0.clone();
+        assert_eq!(r.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        drop(mb0);
+        assert_eq!(r.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        drop(mb1);
+        assert_eq!(r.try_recv(), Err(mpsc::error::TryRecvError::Closed));
     }
 }
