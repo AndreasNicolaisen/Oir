@@ -224,7 +224,7 @@ pub enum RestartStrategy {
     RestForOne,
 }
 
-pub fn supervise_multi(
+pub fn supervise(
     child_starters: Vec<
         Box<
             dyn Fn() -> (DynamicMailbox, tokio::task::JoinHandle<()>, RestartPolicy)
@@ -312,14 +312,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stactor_supervisor_simple_multi_test() {
+    async fn stactor_supervisor_simple_test() {
         let name0 = gensym();
         let name1 = gensym();
         let (rs, h) =
         {
             let name0 = name0.clone();
             let name1 = name1.clone();
-            supervise_multi(
+            supervise(
                 vec![
                     Box::new(move || starter::<BadKey, i32>(name0.clone())),
                     Box::new(move || starter::<BadKey, i32>(name1.clone())),
@@ -381,13 +381,13 @@ mod tests {
                 //     (sys, h)
                 // };
                 let name = name.clone();
-                let (rs, h) = supervise_multi(
+                let (rs, h) = supervise(
                     vec![Box::new(move || starter::<i32, i32>(name.clone()))],
                     RestartStrategy::OneForOne,
                 );
                 (rs, h, RestartPolicy::Transient,)
             };
-            supervise_multi(vec![Box::new(subsuper)], RestartStrategy::OneForOne)
+            supervise(vec![Box::new(subsuper)], RestartStrategy::OneForOne)
         };
 
         let mut mb = NamedMailbox::new(name.clone());
@@ -411,7 +411,7 @@ mod tests {
         {
             let name0 = name0.clone();
             let name1 = name1.clone();
-            supervise_multi(
+            supervise(
                 vec![
                     Box::new(move || starter::<i32, i32>(name0.clone())),
                     Box::new(move || starter::<i32, i32>(name1.clone())),
@@ -462,7 +462,7 @@ mod tests {
         {
             let name0 = name0.clone();
             let name1 = name1.clone();
-            supervise_multi(
+            supervise(
                 vec![
                     Box::new(move || starterPermanent::<BadKey, i32>(name0.clone())),
                     Box::new(move || starterPermanent::<BadKey, i32>(name1.clone())),
@@ -531,7 +531,7 @@ mod tests {
             let name0 = name0.clone();
             let name1 = name1.clone();
             let name2 = name2.clone();
-            supervise_multi(
+            supervise(
                 vec![
                     Box::new(move || starterPermanent::<BadKey, i32>(name0.clone())),
                     Box::new(move || starterPermanent::<BadKey, i32>(name1.clone())),

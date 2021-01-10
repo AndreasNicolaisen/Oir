@@ -97,7 +97,7 @@ fn child<A: Actor>(
 // };
 
 fn pool(num_workers: usize) -> (DynamicMailbox, tokio::task::JoinHandle<()>) {
-    supervise_multi(
+    supervise(
         vec![
             Box::new(move || {
                 let (mb, h) = request_actor(PoolServActor::new());
@@ -122,7 +122,7 @@ fn pool(num_workers: usize) -> (DynamicMailbox, tokio::task::JoinHandle<()>) {
                     });
                     worker_spec.push(b);
                 }
-                let (rs, h) = supervise_multi(worker_spec, RestartStrategy::OneForOne);
+                let (rs, h) = supervise(worker_spec, RestartStrategy::OneForOne);
                 (rs, h, RestartPolicy::Permanent)
             }),
         ],
