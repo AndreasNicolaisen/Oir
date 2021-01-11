@@ -28,6 +28,12 @@ impl RestartPolicy {
     }
 }
 
+pub type ChildDefinition = DynamicMailbox;
+
+pub enum SupervisorRequest {
+    WhichChildren(oneshot::Sender<Vec<ChildDefinition>>),
+}
+
 struct SupervisorState {
     shutdown: bool,
     join_sender: mpsc::Sender<(usize, Result<(), tokio::task::JoinError>)>,
@@ -194,6 +200,14 @@ impl SupervisorState {
         }
     }
 
+    async fn handle_request(&self, msg: SupervisorRequest) {
+        match msg {
+            SupervisorRequest::WhichChildren(sender) => {
+                sender.send(self.system_senders.iter().filter_map(|ss| ss.as_ref().cloned()).collect::<Vec<_>>());
+            }
+        }
+    }
+
     async fn recv_joins(&mut self) -> Option<(usize, Result<(), tokio::task::JoinError>)> {
         if let Some(res) = self.joins_queue.pop_front() {
             Some(res)
@@ -234,11 +248,11 @@ pub fn supervise(
         >,
     >,
     restart_strategy: RestartStrategy,
-) -> (DynamicMailbox, tokio::task::JoinHandle<()>) {
+) -> (UnnamedMailbox<SupervisorRequest>, tokio::task::JoinHandle<()>) {
     use crate::request_handler::{request_actor, Stactor, StoreRequest};
 
     let (ss, mut rs) = mpsc::channel(512);
-    let (sups, mut supr) = mpsc::channel::<()>(512);
+    let (sups, mut supr) = mpsc::channel::<SupervisorRequest>(512);
 
     let h = tokio::spawn(async move {
         let mut state = SupervisorState::new(child_starters, restart_strategy);
@@ -258,12 +272,19 @@ pub fn supervise(
                 },
                 child_res = state.recv_joins() => {
                     state.handle(child_res).await;
+                },
+                sup_msg = supr.recv() => {
+                    if let Some(sup_msg) = sup_msg {
+                        state.handle_request(sup_msg).await;
+                    } else {
+                        break 'outer;
+                    }
                 }
             }
         }
     });
 
-    (DynamicMailbox::new(ss, sups), h)
+    (UnnamedMailbox::new(ss, sups), h)
 }
 
 #[cfg(test)]
@@ -297,6 +318,16 @@ mod tests {
         let (mb, h) = request_actor(Stactor::<K, V>::new());
         let dmb = mb.clone().into();
         mb.register(name);
+        (dmb, h, RestartPolicy::Transient)
+    }
+
+    fn starter_no_name<K, V>() -> (DynamicMailbox, tokio::task::JoinHandle<()>, RestartPolicy)
+    where
+        K: Send + Sync + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
+        V: Send + Sync + Clone + std::fmt::Debug + 'static,
+    {
+        let (mb, h) = request_actor(Stactor::<K, V>::new());
+        let dmb = mb.clone().into();
         (dmb, h, RestartPolicy::Transient)
     }
 
@@ -385,7 +416,7 @@ mod tests {
                     vec![Box::new(move || starter::<i32, i32>(name.clone()))],
                     RestartStrategy::OneForOne,
                 );
-                (rs, h, RestartPolicy::Transient,)
+                (rs.into(), h, RestartPolicy::Transient,)
             };
             supervise(vec![Box::new(subsuper)], RestartStrategy::OneForOne)
         };
@@ -602,5 +633,48 @@ mod tests {
                 .unwrap();
             assert_eq!(Ok(None), rr.await);
         }
+    }
+
+    #[tokio::test]
+    async fn supervisor_which_children_test() {
+        let (mut rs, h) =
+            supervise(
+                vec![
+                    Box::new(move || starter_no_name::<BadKey, i32>()),
+                    Box::new(move || starter_no_name::<BadKey, i64>()),
+                    Box::new(move || starter_no_name::<BadKey, bool>()),
+                ],
+                RestartStrategy::OneForOne,
+            );
+
+        let (crs, crr) = oneshot::channel();
+        let request = SupervisorRequest::WhichChildren(crs);
+        rs.send(request).await;
+        let mut children = crr.await.unwrap();
+
+        async fn assert_child_works<T>(child: ChildDefinition, value: T)
+        where T : Send + Sync + Copy + Eq + std::fmt::Debug + 'static
+        {
+            let mut mb = child.into_typed::<(oneshot::Sender<Option<T>>, StoreRequest<BadKey, T>)>().unwrap();
+
+            // Set a valid key
+            let (rs, rr) = oneshot::channel();
+            mb.send((rs, StoreRequest::Set(BadKey::Good(1), value)))
+                .await
+                .unwrap();
+            assert_eq!(Ok(None), rr.await);
+
+            // Make sure it's actually set
+            let (rs, rr) = oneshot::channel();
+            mb.send((rs, StoreRequest::Get(BadKey::Good(1))))
+                .await
+                .unwrap();
+            assert_eq!(Ok(Some(value)), rr.await);
+        }
+
+        assert_eq!(children.len(), 3);
+        assert_child_works::<bool>(children.pop().unwrap(), true).await;
+        assert_child_works::<i64>(children.pop().unwrap(), 123i64).await;
+        assert_child_works::<i32>(children.pop().unwrap(), 321i32).await;
     }
 }
