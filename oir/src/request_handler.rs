@@ -1,5 +1,6 @@
 use uuid::Uuid;
 
+use crate::supervisor::Actor;
 use crate::actor::ErrorBox;
 use crate::actor::ShutdownReason;
 use crate::actor::SystemMessage;
@@ -125,6 +126,21 @@ impl<K, V> Stactor<K, V> {
             store: HashMap::new(),
             pending: Vec::new(),
         }
+    }
+}
+
+impl<K, V> Actor for Stactor<K, V>
+where
+    K: Send + Sync + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
+    V: Send + Sync + Clone + std::fmt::Debug + 'static,
+{
+    type Arg = ();
+    type Message = (oneshot::Sender<Option<V>>, StoreRequest<K, V>);
+
+    fn start(sup: Option<&crate::supervisor::SupervisorMailbox>, _: ())
+             -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
+
+        request_actor(Stactor::new())
     }
 }
 

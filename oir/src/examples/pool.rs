@@ -26,6 +26,19 @@ impl PoolServActor {
     }
 }
 
+impl Actor for PoolServActor
+where
+{
+    type Arg = ();
+    type Message = (oneshot::Sender<WorkResult>, WorkItem);
+
+    fn start(sup: Option<&crate::supervisor::SupervisorMailbox>, _: ())
+             -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
+
+        request_actor(PoolServActor::new())
+    }
+}
+
 #[async_trait]
 impl RequestHandler<WorkItem, WorkResult> for PoolServActor {
     async fn on_request(
@@ -54,79 +67,29 @@ impl RequestHandler<WorkItem, WorkResult> for PoolWorkerActor {
     }
 }
 
-trait ActorArg: Clone + Send + Sync + 'static {}
 
-trait Actor {
-    type Arg: ActorArg;
+impl Actor for PoolWorkerActor
+where
+{
+    type Arg = ();
+    type Message = (oneshot::Sender<WorkResult>, WorkItem);
 
-    fn from_arg(arg: Self::Arg) -> Self;
-}
+    fn start(sup: Option<&crate::supervisor::SupervisorMailbox>, _: ())
+             -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
 
-struct ChildSpec {
-    policy: RestartPolicy,
-    sender: DynamicMailbox,
-    starter: Box<dyn Fn() -> () + std::marker::Send + std::marker::Sync + 'static>,
-}
-
-fn child<A: Actor>(
-    r: RestartPolicy,
-    s: DynamicMailbox,
-    b: <A as Actor>::Arg,
-) -> ChildSpec {
-    ChildSpec {
-        policy: r,
-        sender: s,
-        starter: Box::new(move || {
-            <A as Actor>::from_arg(b.clone());
-        }),
+        request_actor(PoolWorkerActor)
     }
 }
 
-// supervisor_tree! {
-//     AllForOne,
-//     [
-//         permanent Supervisor {
-//             OneForOne,
-//             [
-//                 permenent PoolWorker {},
-//                 ...
-//             ]
-//         },
-//         permanent PoolServActor "WOw" {},
-//     ]
-// };
-
 fn pool(num_workers: usize) -> (UnnamedMailbox<SupervisorRequest>, tokio::task::JoinHandle<()>) {
     supervise(
-        vec![
-            Box::new(move || {
-                let (mb, h) = request_actor(PoolServActor::new());
-                let dmb = DynamicMailbox::from(mb.clone());
-                mb.register(POOL_SERV_NAME.to_owned());
-                (dmb, h, RestartPolicy::Permanent)
-            }),
-            Box::new(move || {
-                let mut worker_spec = Vec::new();
-                for i in 0..num_workers {
-                    let b: Box<
-                        dyn Fn() -> (
-                                DynamicMailbox,
-                                tokio::task::JoinHandle<()>,
-                                RestartPolicy,
-                            ) + Send
-                            + Sync
-                            + 'static,
-                    > = Box::new(move || {
-                        let (mb, h) = request_actor(PoolServActor::new());
-                        (mb.into(), h, RestartPolicy::Permanent)
-                    });
-                    worker_spec.push(b);
-                }
-                let (rs, h) = supervise(worker_spec, RestartStrategy::OneForOne);
-                (rs.into(), h, RestartPolicy::Permanent)
-            }),
-        ],
         RestartStrategy::OneForAll,
+        vec![
+            child::<PoolServActor>(RestartPolicy::Permanent, Some(POOL_SERV_NAME.to_owned()), ()),
+            supervisor(RestartPolicy::Permanent, None,
+                       RestartStrategy::OneForOne,
+                       vec![child::<PoolWorkerActor>(RestartPolicy::Temporary, None, ()); num_workers])
+        ]
     )
 }
 
