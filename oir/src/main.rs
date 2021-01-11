@@ -5,6 +5,7 @@ extern crate lazy_static;
 
 use crate::actor::ErrorBox;
 
+mod anybox;
 mod actor;
 mod gensym;
 mod mailbox;

@@ -1,10 +1,11 @@
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::collections::HashMap;
 use std::error;
 use std::fmt;
 use std::sync::RwLock;
 use std::mem;
 
+use crate::anybox::AnyBox;
 use crate::actor::SystemMessage;
 
 use async_trait::async_trait;
@@ -212,47 +213,18 @@ where
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DynamicMailbox {
-    type_id: TypeId,
-    raw_sender: *mut u8,
-    dropper: fn (*mut u8),
-    cloner: fn (*mut u8) -> *mut u8,
+    sender: AnyBox,
     sys: mpsc::Sender<SystemMessage>,
 }
 
-unsafe impl Send for DynamicMailbox {}
-unsafe impl Sync for DynamicMailbox {}
 
 impl DynamicMailbox {
     pub fn new<T: Send + Sync + 'static>(sys: mpsc::Sender<SystemMessage>, msg: mpsc::Sender<T>) -> DynamicMailbox {
-        fn drop_it<U>(raw: *mut u8) {
-            unsafe {
-                let _ = Box::from_raw(mem::transmute::<*mut u8, *mut mpsc::Sender<U>>(raw));
-            }
-        }
-
-        fn clone_it<U>(src: *mut u8) -> *mut u8 {
-            unsafe {
-                let b_src = Box::from_raw(mem::transmute::<*mut u8, *mut mpsc::Sender<U>>(src));
-                let b_dst = b_src.clone();
-                // Forget the original box because it's still actually owned by the
-                // dynamic mailbox and should not be dropped here
-                mem::forget(b_src);
-                mem::transmute(Box::into_raw(b_dst))
-            }
-        }
-
-        unsafe {
-            let raw = Box::into_raw(Box::new(msg));
-
-            DynamicMailbox {
-                type_id: TypeId::of::<T>(),
-                raw_sender: mem::transmute(raw),
-                dropper: drop_it::<T>,
-                cloner: clone_it::<T>,
-                sys
-            }
+        DynamicMailbox {
+            sender: AnyBox::new(msg),
+            sys
         }
     }
 
@@ -268,18 +240,14 @@ impl DynamicMailbox {
     }
 
     pub fn into_typed<T: Send + Sync + 'static>(mut self) -> Result<UnnamedMailbox<T>, DynamicMailbox> {
-        if self.type_id == TypeId::of::<T>() {
-            let mut raw_sender = std::ptr::null_mut();
-            mem::swap(&mut self.raw_sender, &mut raw_sender);
-
-            let mb: Box<mpsc::Sender<T>>;
-            unsafe {
-                mb = Box::from_raw(mem::transmute::<_, *mut mpsc::Sender<T>>(raw_sender));
-            }
-            return Ok(UnnamedMailbox::new(self.sys.clone(), *mb));
+        let DynamicMailbox { sender, sys } = self;
+        match sender.into_typed::<mpsc::Sender<T>>() {
+            Ok(msg) =>
+                Ok(UnnamedMailbox::new(sys.clone(), msg)),
+            Err(sender) => Err(DynamicMailbox {
+                sender, sys
+            })
         }
-
-        Err(self)
     }
 
     pub fn is_closed(&self) -> bool {
@@ -295,30 +263,6 @@ where T: Send + Sync + 'static {
     }
 }
 
-impl Drop for DynamicMailbox {
-    fn drop(&mut self) {
-        if self.raw_sender.is_null() {
-            return;
-        }
-        // Drop the allocation
-        unsafe {
-            (self.dropper)(self.raw_sender);
-        }
-        self.raw_sender = std::ptr::null_mut();
-    }
-}
-
-impl Clone for DynamicMailbox {
-    fn clone(&self) -> Self {
-        DynamicMailbox {
-            sys: self.sys.clone(),
-            raw_sender: (self.cloner)(self.raw_sender),
-            type_id: self.type_id,
-            cloner: self.cloner,
-            dropper: self.dropper,
-        }
-    }
-}
 
 
 // #[async_trait]
