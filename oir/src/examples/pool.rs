@@ -85,10 +85,11 @@ fn pool(num_workers: usize) -> (UnnamedMailbox<SupervisorRequest>, tokio::task::
     supervise(
         RestartStrategy::OneForAll,
         vec![
-            child::<PoolServActor>(RestartPolicy::Permanent, Some(POOL_SERV_NAME.to_owned()), ()),
-            supervisor(RestartPolicy::Permanent, None,
+            child::<PoolServActor>(RestartPolicy::Permanent, ())
+                .globally_named(POOL_SERV_NAME.to_owned()),
+            supervisor(RestartPolicy::Permanent, 
                        RestartStrategy::OneForOne,
-                       vec![child::<PoolWorkerActor>(RestartPolicy::Temporary, None, ()); num_workers])
+                       vec![child::<PoolWorkerActor>(RestartPolicy::Temporary, ()); num_workers])
         ]
     )
 }
