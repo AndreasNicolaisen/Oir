@@ -156,6 +156,7 @@ pub struct Child  {
 
 pub enum SupervisorRequest {
     WhichChildren(oneshot::Sender<Vec<Child>>),
+    StartChild(oneshot::Sender<Child>, ChildSpec),
 }
 
 pub type SupervisorMailbox = UnnamedMailbox<SupervisorRequest>;
@@ -331,7 +332,7 @@ impl SupervisorState {
         }
     }
 
-    async fn handle_request(&self, msg: SupervisorRequest) {
+    async fn handle_request(&mut self, msg: SupervisorRequest) {
         match msg {
             SupervisorRequest::WhichChildren(sender) => {
                 let children =
@@ -348,6 +349,29 @@ impl SupervisorState {
                                 }))
                     .collect::<Vec<_>>();
                 sender.send(children);
+            },
+            SupervisorRequest::StartChild(sender, child_spec) => {
+                let li = child_spec.name.as_ref().map_or_else(|| {
+                    let id = LocalId::Unnamed(self.next_id);
+                    self.next_id += 1;
+                    id
+                },
+                |n| LocalId::Named(n.clone()));
+                let child = ChildState {
+                    spec: child_spec,
+                    local_id: li.clone(),
+                    mailbox: None,
+                };
+                let idx = self.children.len();
+                self.children.push(child);
+                self.start_child(li);
+                let child = &self.children[idx];
+                sender.send(Child {
+                    mailbox: child.mailbox.as_ref().unwrap().clone(),
+                    type_id: child.spec.type_id,
+                    local_id: child.local_id.clone(),
+                    registered_globally: child.spec.registered_globally,
+                });
             }
         }
     }
@@ -801,5 +825,28 @@ mod tests {
         assert_child_works::<bool>(children.pop().unwrap(), true).await;
         assert_child_works::<i64>(children.pop().unwrap(), 123i64).await;
         assert_child_works::<i32>(children.pop().unwrap(), 321i32).await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_start_child_test() {
+        let (mut rs, h) = supervise(RestartStrategy::OneForOne, vec![]);
+
+        let (crs, crr) = oneshot::channel();
+        let request = SupervisorRequest::StartChild(crs, child::<Stactor<i32, i32>>(RestartPolicy::Transient, ()));
+        rs.send(request).await;
+        let child = crr.await.unwrap();
+        let mut mb = child.mailbox.into_typed::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>().unwrap();
+
+        let (rs, rr) = oneshot::channel();
+        mb.send((rs, StoreRequest::Set(3, 1)))
+            .await
+            .unwrap();
+        assert_eq!(Ok(None), rr.await);
+
+        let (rs, rr) = oneshot::channel();
+        mb.send((rs, StoreRequest::Get(3)))
+            .await
+            .unwrap();
+        assert_eq!(Ok(Some(1)), rr.await);
     }
 }
