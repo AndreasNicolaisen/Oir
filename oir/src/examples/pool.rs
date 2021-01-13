@@ -26,15 +26,14 @@ impl PoolServActor {
     }
 }
 
-impl Actor for PoolServActor
-where
-{
+impl Actor for PoolServActor {
     type Arg = ();
     type Message = (oneshot::Sender<WorkResult>, WorkItem);
 
-    fn start(sup: Option<&crate::supervisor::SupervisorMailbox>, _: ())
-             -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
-
+    fn start(
+        sup: Option<&crate::supervisor::SupervisorMailbox>,
+        _: (),
+    ) -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
         request_actor(PoolServActor::new())
     }
 }
@@ -67,30 +66,35 @@ impl RequestHandler<WorkItem, WorkResult> for PoolWorkerActor {
     }
 }
 
-
-impl Actor for PoolWorkerActor
-where
-{
+impl Actor for PoolWorkerActor {
     type Arg = ();
     type Message = (oneshot::Sender<WorkResult>, WorkItem);
 
-    fn start(sup: Option<&crate::supervisor::SupervisorMailbox>, _: ())
-             -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
-
+    fn start(
+        sup: Option<&crate::supervisor::SupervisorMailbox>,
+        _: (),
+    ) -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
         request_actor(PoolWorkerActor)
     }
 }
 
-fn pool(num_workers: usize) -> (UnnamedMailbox<SupervisorRequest>, tokio::task::JoinHandle<()>) {
+fn pool(
+    num_workers: usize,
+) -> (
+    UnnamedMailbox<SupervisorRequest>,
+    tokio::task::JoinHandle<()>,
+) {
     supervise(
         RestartStrategy::OneForAll,
         vec![
             child::<PoolServActor>(RestartPolicy::Permanent, ())
                 .globally_named(POOL_SERV_NAME.to_owned()),
-            supervisor(RestartPolicy::Permanent, 
-                       RestartStrategy::OneForOne,
-                       vec![child::<PoolWorkerActor>(RestartPolicy::Temporary, ()); num_workers])
-        ]
+            supervisor(
+                RestartPolicy::Permanent,
+                RestartStrategy::OneForOne,
+                vec![child::<PoolWorkerActor>(RestartPolicy::Temporary, ()); num_workers],
+            ),
+        ],
     )
 }
 
@@ -101,7 +105,8 @@ mod test {
     #[tokio::test]
     async fn test_pool() {
         let (sup_rs, sup_h) = pool(5);
-        let mut mb = NamedMailbox::<(oneshot::Sender<WorkResult>, WorkItem)>::new(POOL_SERV_NAME.to_owned());
+        let mut mb =
+            NamedMailbox::<(oneshot::Sender<WorkResult>, WorkItem)>::new(POOL_SERV_NAME.to_owned());
 
         while mb.resolve().is_err() {
             tokio::task::yield_now().await;

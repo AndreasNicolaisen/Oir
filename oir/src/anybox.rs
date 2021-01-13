@@ -5,13 +5,12 @@ use std::mem;
 pub struct AnyBox {
     type_id: TypeId,
     raw: *mut u8,
-    dropper: fn (*mut u8),
-    cloner: fn (*mut u8) -> *mut u8,
+    dropper: fn(*mut u8),
+    cloner: fn(*mut u8) -> *mut u8,
 }
 
 unsafe impl Send for AnyBox {}
 unsafe impl Sync for AnyBox {}
-
 
 impl AnyBox {
     pub fn new<T: Clone + Send + Sync + 'static>(v: T) -> AnyBox {
@@ -53,7 +52,7 @@ impl AnyBox {
             unsafe {
                 b = Box::from_raw(mem::transmute::<_, *mut T>(raw));
             }
-            return Ok(*b)
+            return Ok(*b);
         }
 
         Err(self)

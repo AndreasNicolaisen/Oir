@@ -2,11 +2,11 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::error;
 use std::fmt;
-use std::sync::RwLock;
 use std::mem;
+use std::sync::RwLock;
 
-use crate::anybox::AnyBox;
 use crate::actor::SystemMessage;
+use crate::anybox::AnyBox;
 
 use async_trait::async_trait;
 use tokio;
@@ -40,7 +40,7 @@ impl<T> fmt::Display for MailboxSendError<T> {
             match self {
                 ResolutionError(_) => "could not resolve name",
                 SendError(_) => "channel closed",
-                TypeError => "message type is invalid for this mailbox"
+                TypeError => "message type is invalid for this mailbox",
             }
         )
     }
@@ -212,19 +212,20 @@ where
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct DynamicMailbox {
     sender: AnyBox,
     sys: mpsc::Sender<SystemMessage>,
 }
 
-
 impl DynamicMailbox {
-    pub fn new<T: Send + Sync + 'static>(sys: mpsc::Sender<SystemMessage>, msg: mpsc::Sender<T>) -> DynamicMailbox {
+    pub fn new<T: Send + Sync + 'static>(
+        sys: mpsc::Sender<SystemMessage>,
+        msg: mpsc::Sender<T>,
+    ) -> DynamicMailbox {
         DynamicMailbox {
             sender: AnyBox::new(msg),
-            sys
+            sys,
         }
     }
 
@@ -239,14 +240,13 @@ impl DynamicMailbox {
         self.sys.try_send(msg).is_ok()
     }
 
-    pub fn into_typed<T: Send + Sync + 'static>(mut self) -> Result<UnnamedMailbox<T>, DynamicMailbox> {
+    pub fn into_typed<T: Send + Sync + 'static>(
+        mut self,
+    ) -> Result<UnnamedMailbox<T>, DynamicMailbox> {
         let DynamicMailbox { sender, sys } = self;
         match sender.into_typed::<mpsc::Sender<T>>() {
-            Ok(msg) =>
-                Ok(UnnamedMailbox::new(sys.clone(), msg)),
-            Err(sender) => Err(DynamicMailbox {
-                sender, sys
-            })
+            Ok(msg) => Ok(UnnamedMailbox::new(sys.clone(), msg)),
+            Err(sender) => Err(DynamicMailbox { sender, sys }),
         }
     }
 
@@ -257,13 +257,13 @@ impl DynamicMailbox {
 }
 
 impl<T> From<UnnamedMailbox<T>> for DynamicMailbox
-where T: Send + Sync + 'static {
+where
+    T: Send + Sync + 'static,
+{
     fn from(x: UnnamedMailbox<T>) -> Self {
         DynamicMailbox::new(x.sys, x.msg)
     }
 }
-
-
 
 // #[async_trait]
 // impl<T> Mailbox<T> for DynamicMailbox
@@ -283,7 +283,6 @@ where T: Send + Sync + 'static {
 //     ) -> Result<(), MailboxSendError<SystemMessage>> {
 //         Ok(self.sys.send(msg).await?)
 //     }
-
 
 //     fn is_closed(&self) -> bool {
 //         // NOTE: We don't check msg because we don't know its actual type here

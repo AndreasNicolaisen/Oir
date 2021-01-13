@@ -1,8 +1,8 @@
-use crate::anybox::AnyBox;
 use crate::actor::ErrorBox;
 use crate::actor::ShutdownReason;
 use crate::actor::SystemMessage;
-use crate::mailbox::{Mailbox, UnnamedMailbox, DynamicMailbox};
+use crate::anybox::AnyBox;
+use crate::mailbox::{DynamicMailbox, Mailbox, UnnamedMailbox};
 
 use tokio;
 use tokio::sync::mpsc;
@@ -30,13 +30,14 @@ impl RestartPolicy {
     }
 }
 
-
 pub trait Actor: Send + 'static {
     type Arg: Clone + Send + Sync + 'static;
     type Message: Send + Sync + 'static;
 
-    fn start(sup: Option<&SupervisorMailbox>, arg: Self::Arg)
-        -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>);
+    fn start(
+        sup: Option<&SupervisorMailbox>,
+        arg: Self::Arg,
+    ) -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>);
 }
 
 #[derive(Clone)]
@@ -52,18 +53,17 @@ pub struct ChildSpec {
     registered_globally: bool,
     type_id: TypeId,
     arg: AnyBox,
-    starter: fn (Option<&SupervisorMailbox>, &ChildSpec)
-                 -> (DynamicMailbox, tokio::task::JoinHandle<()>),
+    starter:
+        fn(Option<&SupervisorMailbox>, &ChildSpec) -> (DynamicMailbox, tokio::task::JoinHandle<()>),
 }
 
-pub fn child<A: Actor>(
-    r: RestartPolicy,
-    b: <A as Actor>::Arg,
-) -> ChildSpec {
-
-    fn do_start<T: Actor>(mb: Option<&SupervisorMailbox>, child_spec: &ChildSpec)
-                          -> (DynamicMailbox, tokio::task::JoinHandle<()>) {
-        let (mb, h) = <T as Actor>::start(mb, child_spec.arg.clone().into_typed::<T::Arg>().unwrap());
+pub fn child<A: Actor>(r: RestartPolicy, b: <A as Actor>::Arg) -> ChildSpec {
+    fn do_start<T: Actor>(
+        mb: Option<&SupervisorMailbox>,
+        child_spec: &ChildSpec,
+    ) -> (DynamicMailbox, tokio::task::JoinHandle<()>) {
+        let (mb, h) =
+            <T as Actor>::start(mb, child_spec.arg.clone().into_typed::<T::Arg>().unwrap());
         let dmb = mb.clone().into();
         if child_spec.registered_globally {
             if let Some(name) = &child_spec.name {
@@ -99,14 +99,14 @@ impl ChildSpec {
     }
 }
 
-pub fn supervisor(r: RestartPolicy,
-                  s: RestartStrategy,
-                  c: Vec<ChildSpec>
-) -> ChildSpec {
-    child::<SupervisorState>(r, SupervisorSpec {
-        strategy: s,
-        child_specs: c,
-    })
+pub fn supervisor(r: RestartPolicy, s: RestartStrategy, c: Vec<ChildSpec>) -> ChildSpec {
+    child::<SupervisorState>(
+        r,
+        SupervisorSpec {
+            strategy: s,
+            child_specs: c,
+        },
+    )
 }
 
 // macro_rules! supervisor_tree {
@@ -147,7 +147,7 @@ pub enum LocalId {
     Unnamed(usize),
 }
 
-pub struct Child  {
+pub struct Child {
     mailbox: DynamicMailbox,
     type_id: TypeId,
     local_id: LocalId,
@@ -185,7 +185,8 @@ impl SupervisorState {
         restart_strategy: RestartStrategy,
     ) -> SupervisorState {
         let (js, mut jr) = mpsc::channel(512);
-        let (next_id, children) = SupervisorState::start_children(child_specs, js.clone(), &self_mailbox);
+        let (next_id, children) =
+            SupervisorState::start_children(child_specs, js.clone(), &self_mailbox);
         let mut state = SupervisorState {
             self_mailbox,
             shutdown: false,
@@ -199,23 +200,34 @@ impl SupervisorState {
         state
     }
 
-    fn start_children(child_specs: Vec<ChildSpec>, join_sender: mpsc::Sender<(LocalId, Result<(), tokio::task::JoinError>)>, mailbox: &SupervisorMailbox) -> (usize, Vec<ChildState>) {
+    fn start_children(
+        child_specs: Vec<ChildSpec>,
+        join_sender: mpsc::Sender<(LocalId, Result<(), tokio::task::JoinError>)>,
+        mailbox: &SupervisorMailbox,
+    ) -> (usize, Vec<ChildState>) {
         let mut id = 0;
         let children = child_specs
             .into_iter()
             .map(|spec| {
                 let js = join_sender.clone();
                 let (mb, h) = (spec.starter)(Some(mailbox), &spec);
-                let local_id = spec.name.as_ref().map_or_else(|| {
-                    let local_id = LocalId::Unnamed(id);
-                    id += 1;
-                    local_id
-                }, |name| LocalId::Named(name.clone()));
+                let local_id = spec.name.as_ref().map_or_else(
+                    || {
+                        let local_id = LocalId::Unnamed(id);
+                        id += 1;
+                        local_id
+                    },
+                    |name| LocalId::Named(name.clone()),
+                );
                 let li = local_id.clone();
                 tokio::spawn(async move {
                     js.send((li, h.await)).await;
                 });
-                ChildState{spec, mailbox: Some(mb), local_id}
+                ChildState {
+                    spec,
+                    mailbox: Some(mb),
+                    local_id,
+                }
             })
             .collect::<Vec<_>>();
         (id, children)
@@ -235,15 +247,15 @@ impl SupervisorState {
                     match self.join_receiver.recv().await {
                         Some((j, jr)) if j == cs.local_id => {
                             break jr;
-                        },
+                        }
                         Some(x) => {
                             self.joins_queue.push_back(x);
-                        },
+                        }
                         None => {
                             panic!("Join receiver was closed");
                         }
                     }
-                };
+                }
             }
         }
 
@@ -270,7 +282,13 @@ impl SupervisorState {
         match child_res {
             Some((li, je)) => {
                 let abnormal_crash = je.is_err();
-                let policy = self.children.iter().find(|cs| cs.local_id == li).unwrap().spec.policy;
+                let policy = self
+                    .children
+                    .iter()
+                    .find(|cs| cs.local_id == li)
+                    .unwrap()
+                    .spec
+                    .policy;
 
                 match self.restart_strategy {
                     RestartStrategy::OneForOne => {
@@ -292,10 +310,14 @@ impl SupervisorState {
                         }
                     }
                     RestartStrategy::RestForOne => {
-                        let i = self.children.iter().position(|cs| cs.local_id == li).unwrap();
-                        let mut receive_statuses = vec![false; self.children.len() - (i+1)];
+                        let i = self
+                            .children
+                            .iter()
+                            .position(|cs| cs.local_id == li)
+                            .unwrap();
+                        let mut receive_statuses = vec![false; self.children.len() - (i + 1)];
 
-                        for (i, child) in self.children[i+1..].iter_mut().enumerate() {
+                        for (i, child) in self.children[i + 1..].iter_mut().enumerate() {
                             if let Some(s) = &mut child.mailbox {
                                 let _ = s.send_system(SystemMessage::Shutdown).await;
                             } else {
@@ -305,9 +327,13 @@ impl SupervisorState {
 
                         while !receive_statuses.iter().all(|&b| b) {
                             if let Some((li, j)) = self.join_receiver.recv().await {
-                                let n = self.children.iter().position(|cs| cs.local_id == li).unwrap();
+                                let n = self
+                                    .children
+                                    .iter()
+                                    .position(|cs| cs.local_id == li)
+                                    .unwrap();
                                 if n > i {
-                                    receive_statuses[n - (i+1)] = true;
+                                    receive_statuses[n - (i + 1)] = true;
                                 } else {
                                     self.joins_queue.push_back((li, j));
                                 }
@@ -327,7 +353,7 @@ impl SupervisorState {
                         }
                     }
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -335,28 +361,29 @@ impl SupervisorState {
     async fn handle_request(&mut self, msg: SupervisorRequest) {
         match msg {
             SupervisorRequest::WhichChildren(sender) => {
-                let children =
-                    self.children
+                let children = self
+                    .children
                     .iter()
-                    .filter_map(|cs|
-                                cs.mailbox
-                                .as_ref()
-                                .map(|mb| Child {
-                                    mailbox: mb.clone(),
-                                    type_id: cs.spec.type_id,
-                                    local_id: cs.local_id.clone(),
-                                    registered_globally: cs.spec.registered_globally
-                                }))
+                    .filter_map(|cs| {
+                        cs.mailbox.as_ref().map(|mb| Child {
+                            mailbox: mb.clone(),
+                            type_id: cs.spec.type_id,
+                            local_id: cs.local_id.clone(),
+                            registered_globally: cs.spec.registered_globally,
+                        })
+                    })
                     .collect::<Vec<_>>();
                 sender.send(children);
-            },
+            }
             SupervisorRequest::StartChild(sender, child_spec) => {
-                let li = child_spec.name.as_ref().map_or_else(|| {
-                    let id = LocalId::Unnamed(self.next_id);
-                    self.next_id += 1;
-                    id
-                },
-                |n| LocalId::Named(n.clone()));
+                let li = child_spec.name.as_ref().map_or_else(
+                    || {
+                        let id = LocalId::Unnamed(self.next_id);
+                        self.next_id += 1;
+                        id
+                    },
+                    |n| LocalId::Named(n.clone()),
+                );
                 let child = ChildState {
                     spec: child_spec,
                     local_id: li.clone(),
@@ -400,14 +427,14 @@ impl Drop for SupervisorState {
     }
 }
 
-
 impl Actor for SupervisorState {
     type Arg = SupervisorSpec;
     type Message = SupervisorRequest;
 
-    fn start(sup: Option<&SupervisorMailbox>, arg: Self::Arg)
-             -> (SupervisorMailbox, tokio::task::JoinHandle<()>) {
-
+    fn start(
+        sup: Option<&SupervisorMailbox>,
+        arg: Self::Arg,
+    ) -> (SupervisorMailbox, tokio::task::JoinHandle<()>) {
         let (ss, mut rs) = mpsc::channel(512);
         let (sups, mut supr) = mpsc::channel::<SupervisorRequest>(512);
         let mb = UnnamedMailbox::new(ss.clone(), sups.clone());
@@ -456,11 +483,17 @@ pub enum RestartStrategy {
 pub fn supervise(
     restart_strategy: RestartStrategy,
     child_specs: Vec<ChildSpec>,
-) -> (UnnamedMailbox<SupervisorRequest>, tokio::task::JoinHandle<()>) {
-    SupervisorState::start(None, SupervisorSpec {
-        strategy: restart_strategy,
-        child_specs,
-    })
+) -> (
+    UnnamedMailbox<SupervisorRequest>,
+    tokio::task::JoinHandle<()>,
+) {
+    SupervisorState::start(
+        None,
+        SupervisorSpec {
+            strategy: restart_strategy,
+            child_specs,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -490,8 +523,7 @@ mod tests {
     async fn stactor_supervisor_simple_test() {
         let name0 = gensym();
         let name1 = gensym();
-        let (rs, h) =
-        {
+        let (rs, h) = {
             let name0 = name0.clone();
             let name1 = name1.clone();
             supervise(
@@ -547,19 +579,16 @@ mod tests {
     async fn nested_supervisor_test() {
         let name = gensym();
         let (rs, rr) = mpsc::channel::<SystemMessage>(512);
-        let h =
-        {
+        let h = {
             let name = name.clone();
             supervise(
                 RestartStrategy::OneForOne,
-                vec![
-                    supervisor(RestartPolicy::Transient,
-                               RestartStrategy::OneForOne,
-                               vec![
-                                   child::<Stactor<i32, i32>>(RestartPolicy::Transient, ())
-                                       .globally_named(name)
-                               ])
-                ]
+                vec![supervisor(
+                    RestartPolicy::Transient,
+                    RestartStrategy::OneForOne,
+                    vec![child::<Stactor<i32, i32>>(RestartPolicy::Transient, ())
+                        .globally_named(name)],
+                )],
             )
         };
 
@@ -580,17 +609,14 @@ mod tests {
     async fn stactor_supervisor_shutdown_test() {
         let name0 = gensym();
         let name1 = gensym();
-        let (mut rs, h) =
-        {
+        let (mut rs, h) = {
             let name0 = name0.clone();
             let name1 = name1.clone();
             supervise(
                 RestartStrategy::OneForOne,
                 vec![
-                    child::<Stactor<i32, i32>>(RestartPolicy::Transient, ())
-                        .globally_named(name0),
-                    child::<Stactor<i32, i32>>(RestartPolicy::Transient, ())
-                        .globally_named(name1)
+                    child::<Stactor<i32, i32>>(RestartPolicy::Transient, ()).globally_named(name0),
+                    child::<Stactor<i32, i32>>(RestartPolicy::Transient, ()).globally_named(name1),
                 ],
             )
         };
@@ -633,8 +659,7 @@ mod tests {
     async fn stactor_one_for_all_supervisor_shutdown_test() {
         let name0 = gensym();
         let name1 = gensym();
-        let (rs, h) =
-        {
+        let (rs, h) = {
             let name0 = name0.clone();
             let name1 = name1.clone();
             supervise(
@@ -703,8 +728,7 @@ mod tests {
         let name0 = gensym();
         let name1 = gensym();
         let name2 = gensym();
-        let (rs, h) =
-        {
+        let (rs, h) = {
             let name0 = name0.clone();
             let name1 = name1.clone();
             let name2 = name2.clone();
@@ -786,15 +810,14 @@ mod tests {
 
     #[tokio::test]
     async fn supervisor_which_children_test() {
-        let (mut rs, h) =
-            supervise(
-                RestartStrategy::OneForOne,
-                vec![
-                    child::<Stactor<BadKey, i32>>(RestartPolicy::Transient, ()),
-                    child::<Stactor<BadKey, i64>>(RestartPolicy::Transient, ()),
-                    child::<Stactor<BadKey, bool>>(RestartPolicy::Transient, ()),
-                ],
-            );
+        let (mut rs, h) = supervise(
+            RestartStrategy::OneForOne,
+            vec![
+                child::<Stactor<BadKey, i32>>(RestartPolicy::Transient, ()),
+                child::<Stactor<BadKey, i64>>(RestartPolicy::Transient, ()),
+                child::<Stactor<BadKey, bool>>(RestartPolicy::Transient, ()),
+            ],
+        );
 
         let (crs, crr) = oneshot::channel();
         let request = SupervisorRequest::WhichChildren(crs);
@@ -802,9 +825,13 @@ mod tests {
         let mut children = crr.await.unwrap();
 
         async fn assert_child_works<T>(child: Child, value: T)
-        where T : Send + Sync + Copy + Eq + std::fmt::Debug + 'static
+        where
+            T: Send + Sync + Copy + Eq + std::fmt::Debug + 'static,
         {
-            let mut mb = child.mailbox.into_typed::<(oneshot::Sender<Option<T>>, StoreRequest<BadKey, T>)>().unwrap();
+            let mut mb = child
+                .mailbox
+                .into_typed::<(oneshot::Sender<Option<T>>, StoreRequest<BadKey, T>)>()
+                .unwrap();
 
             // Set a valid key
             let (rs, rr) = oneshot::channel();
@@ -832,21 +859,23 @@ mod tests {
         let (mut rs, h) = supervise(RestartStrategy::OneForOne, vec![]);
 
         let (crs, crr) = oneshot::channel();
-        let request = SupervisorRequest::StartChild(crs, child::<Stactor<i32, i32>>(RestartPolicy::Transient, ()));
+        let request = SupervisorRequest::StartChild(
+            crs,
+            child::<Stactor<i32, i32>>(RestartPolicy::Transient, ()),
+        );
         rs.send(request).await;
         let child = crr.await.unwrap();
-        let mut mb = child.mailbox.into_typed::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>().unwrap();
+        let mut mb = child
+            .mailbox
+            .into_typed::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>()
+            .unwrap();
 
         let (rs, rr) = oneshot::channel();
-        mb.send((rs, StoreRequest::Set(3, 1)))
-            .await
-            .unwrap();
+        mb.send((rs, StoreRequest::Set(3, 1))).await.unwrap();
         assert_eq!(Ok(None), rr.await);
 
         let (rs, rr) = oneshot::channel();
-        mb.send((rs, StoreRequest::Get(3)))
-            .await
-            .unwrap();
+        mb.send((rs, StoreRequest::Get(3))).await.unwrap();
         assert_eq!(Ok(Some(1)), rr.await);
     }
 }

@@ -1,9 +1,9 @@
 use uuid::Uuid;
 
-use crate::supervisor::Actor;
 use crate::actor::ErrorBox;
 use crate::actor::ShutdownReason;
 use crate::actor::SystemMessage;
+use crate::supervisor::Actor;
 
 use crate::mailbox::UnnamedMailbox;
 
@@ -137,9 +137,10 @@ where
     type Arg = ();
     type Message = (oneshot::Sender<Option<V>>, StoreRequest<K, V>);
 
-    fn start(sup: Option<&crate::supervisor::SupervisorMailbox>, _: ())
-             -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
-
+    fn start(
+        sup: Option<&crate::supervisor::SupervisorMailbox>,
+        _: (),
+    ) -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
         request_actor(Stactor::new())
     }
 }

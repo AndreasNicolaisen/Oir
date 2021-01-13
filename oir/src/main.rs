@@ -5,14 +5,14 @@ extern crate lazy_static;
 
 use crate::actor::ErrorBox;
 
-mod anybox;
 mod actor;
+mod anybox;
+mod examples;
 mod gensym;
 mod mailbox;
 mod message_handler;
 mod request_handler;
 mod supervisor;
-mod examples;
 
 use crate::message_handler::message_actor;
 use crate::message_handler::PingActor;
