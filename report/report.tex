@@ -10,6 +10,8 @@
 
 \begin{document}
 
+% TODO: Actors vs. processes
+
 \maketitle
 
 \section{Introduction}
@@ -41,12 +43,63 @@
 \item What have we chosen to focus on?
 \end{itemize}
 
+An implementation of an OTP-alike library will have to contain functionality in the lines of:
+\begin{itemize}
+\item \textbf{Message sending}\\
+  The different actors should be able to communicate with each others, using
+  messages. To accomplish this, they will need some way to refer to each other.
+  This could be done by using global ids, registered names or passing around
+  references to each other.
+\item \textbf{Supervisor trees}\\
+  In order to organize the program, the actors should be organized into
+  supervisor trees. These will be trees of supervisor actors, with worker actors
+  as leafes. The supervisors should be able to monitor and restart its children,
+  should they crash, in accordance with supplied strategies and policies.
+\item \textbf{Behaviours}
+\end{itemize}
+
 \section{Design}
 \begin{itemize}
 \item Talk about what an OTP implementation overall consists of (in general)
 \item Talk about our high-level design decisions
 \item Talk about what design experiments we did (And explain why we went back on
   some of them)
+\end{itemize}
+
+
+We have decided to make our implementaion asynchronous,
+\begin{itemize}
+\item \textbf{Message sending}\\
+  We have opted to statically type messages. This means that each actor can only
+  receive messages of its data type, as well as ``System messages''. Message
+  sending is accomplished using ``Mailboxes''. Using these actors can
+  send the 2 kinds of messages to each other. There 3 kinds of mailboxes,
+  unnamed, named and dynamic. Unnamed mailboxes are the main kind of mailbox,
+  which allows the actors to send system messages and data messages to each
+  other. Should the receiving actor crash, trying to send a message to it, using
+  an unnamed mailbox, will result in an error. Named mailboxes are an
+  indirection over unnamed mailboxes, used for sending messages to an actor that
+  is registered globally with a name. These 2 first kind of mailboxes are typed
+  over the message type. The dynamic mailbox is mainly used in situations where
+  multiple different actor types can occur. % TODO: Add example (which children)
+  It can only be used for sending system messages, until the user tries to casts
+  it to a concrete type. This allows the user to handle them without caring
+  about the underlying message type.
+\item \textbf{Supervisor - Specification}
+
+\item \textbf{Supervisor - Interaction}
+\item \textbf{Behaviours}
+  The concept of behavious are implemented as traits, that should be implemented
+  in order to fulfill the behaviour. This will consist of a number of methods
+  that should be implemented, and they (the traits) will often over a type. They
+  will often often with a helper methods that provides the common boiler plate
+  functionality. When a message passed the the actor is not part of the boiler
+  plate, the behaviour will pass this message unto implementation of the trait.
+\item \textbf{Asynchronous exceptions} % TODO: Make name better
+  Unlike in Erlang, actors can't kill each other directly. Instead each
+  actors can request that an other actors shuts itself down. The handeling of
+  this message will then take place in library code, to avoid usercode from
+  simply ignoring the request.
 \end{itemize}
 
 \section{Implementation}
