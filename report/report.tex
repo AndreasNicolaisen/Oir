@@ -58,6 +58,8 @@ An implementation of an OTP-alike library will have to contain functionality in 
 \item \textbf{Behaviours}
 \end{itemize}
 
+% TODO: Talk about local and global naming
+
 \section{Design}
 \begin{itemize}
 \item Talk about what an OTP implementation overall consists of (in general)
@@ -66,8 +68,7 @@ An implementation of an OTP-alike library will have to contain functionality in 
   some of them)
 \end{itemize}
 
-
-We have decided to make our implementaion asynchronous,
+We have decided to make our implementaion asynchronous, 
 \begin{itemize}
 \item \textbf{Message sending}\\
   We have opted to statically type messages. This means that each actor can only
@@ -85,9 +86,45 @@ We have decided to make our implementaion asynchronous,
   It can only be used for sending system messages, until the user tries to casts
   it to a concrete type. This allows the user to handle them without caring
   about the underlying message type.
-\item \textbf{Supervisor - Specification}
-
-\item \textbf{Supervisor - Interaction}
+\item \textbf{Actor naming}
+  There are 2 forms of naming of actors, global and local. An actor's mailbox
+  can be registered to a global name, then, through name-resolution, any actor
+  can resolve the mailbox to that name. This useful for commucating with often
+  used actors, without having to acquire its mailbox through other mean. Local
+  naming is used when supervisors has to refer to its children. When actors are
+  globally named, the name will be used locally as well. Not all actors have to
+  be explicitly named, and when they're not they are given a unique local name.
+\item \textbf{Supervision}
+  Our design of supervision breaks into two parts, how the user specifies it and
+  how they interact with it. We have chosen to use a declarative approch when
+  specifying how supervision should be created, in order to aliviate the user
+  from having to think about how supervision trees are built. Instead, they only
+  have to think about how they want to structure their supervion
+  tree/application. We allow the user to interact with the supervisors through
+  messages, so that they can establish contact between actors dynamically. This
+  is useful for dealing with dynamic instantiaion of actors, and for discovering
+  other actors in the supervision tree, without having to resort to global
+  naming.
+  \begin{itemize}
+  \item \textbf{Supervisor - Specification}
+    In order to make it easier for the user, supervision trees can be created
+    declaretivly, using a specication api. This consist of building blocks of
+    supervisors and workers, which are put into a tree.
+    % TODO: Insert example (diagram and code example)
+    A supervisor will need some restart strategy, as well as vector of child
+    specications. A worker will need some restart policy, and also takes an
+    starting argument. Both supervisors and workers can be named, either locally
+    or globally. Local names are only used when interacting with the supervisors
+    of the named actor. % TODO: Add reasoning
+  \item \textbf{Supervisor - Interaction}
+    When interacting with a supervisor, it is important to note that supervisors
+    themselves are actors, just like workers. This means that they can receive
+    messages like any other actor. They can receive system messages asking them to
+    shutdown, as well as requests. These requests allow other actors to ask for a
+    list of the supervisors children, and to ask the supervisor to start another
+    child, given a specification. All children are given a mailbox to their
+    supervisor, so that they can make these requests of them.
+  \end{itemize}
 \item \textbf{Behaviours}
   The concept of behavious are implemented as traits, that should be implemented
   in order to fulfill the behaviour. This will consist of a number of methods
@@ -106,6 +143,7 @@ We have decided to make our implementaion asynchronous,
 \begin{itemize}
 \item Talk about some concrete implementation decisions (and what drove them)
 \item Go into some (few) low-level technical details that might be interesting
+\item Tokio, lightweight multiprocessing, like erlang.
 \end{itemize}
 
 \section{Examples}
