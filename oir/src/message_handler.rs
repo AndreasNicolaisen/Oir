@@ -12,7 +12,7 @@ use crate::mailbox::{Mailbox, UnnamedMailbox};
 #[async_trait]
 pub trait MessageHandler<T>: Send + 'static
 where
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     async fn on_message(&mut self, msg: T) -> Result<(), ErrorBox>;
 }
@@ -54,7 +54,7 @@ pub enum PingMessage {
 pub fn message_actor<T, M>(mut actor: M) -> (UnnamedMailbox<T>, tokio::task::JoinHandle<()>)
 where
     M: MessageHandler<T> + Send + 'static,
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     let (ss, mut rs) = mpsc::channel::<SystemMessage>(512);
     let (sp, mut rp) = mpsc::channel::<T>(512);

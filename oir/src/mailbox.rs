@@ -51,7 +51,7 @@ impl<T> error::Error for MailboxSendError<T> where T: fmt::Debug {}
 #[async_trait]
 pub trait Mailbox<T>
 where
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>>;
 
@@ -75,7 +75,7 @@ pub struct NamedMailbox<T> {
 
 impl<T> NamedMailbox<T>
 where
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     pub fn new(name: String) -> NamedMailbox<T> {
         NamedMailbox {
@@ -102,7 +102,7 @@ where
 #[async_trait]
 impl<T> Mailbox<T> for NamedMailbox<T>
 where
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
         self.resolve()?;
@@ -146,7 +146,7 @@ where
 
 impl<T> Clone for NamedMailbox<T>
 where
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     fn clone(&self) -> Self {
         NamedMailbox {
@@ -164,7 +164,7 @@ pub struct UnnamedMailbox<T> {
 
 impl<T> UnnamedMailbox<T>
 where
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     pub fn new(sys: mpsc::Sender<SystemMessage>, msg: mpsc::Sender<T>) -> UnnamedMailbox<T> {
         UnnamedMailbox { sys, msg }
@@ -182,7 +182,7 @@ where
 #[async_trait]
 impl<T> Mailbox<T> for UnnamedMailbox<T>
 where
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
         Ok(self.msg.send(msg).await?)
@@ -202,7 +202,7 @@ where
 
 impl<T> Clone for UnnamedMailbox<T>
 where
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     fn clone(&self) -> Self {
         UnnamedMailbox {
@@ -219,7 +219,7 @@ pub struct DynamicMailbox {
 }
 
 impl DynamicMailbox {
-    pub fn new<T: Send + Sync + 'static>(
+    pub fn new<T: Send + 'static>(
         sys: mpsc::Sender<SystemMessage>,
         msg: mpsc::Sender<T>,
     ) -> DynamicMailbox {
@@ -240,7 +240,7 @@ impl DynamicMailbox {
         self.sys.try_send(msg).is_ok()
     }
 
-    pub fn into_typed<T: Send + Sync + 'static>(
+    pub fn into_typed<T: Send + 'static>(
         mut self,
     ) -> Result<UnnamedMailbox<T>, DynamicMailbox> {
         let DynamicMailbox { sender, sys } = self;
@@ -258,7 +258,7 @@ impl DynamicMailbox {
 
 impl<T> From<UnnamedMailbox<T>> for DynamicMailbox
 where
-    T: Send + Sync + 'static,
+    T: Send + 'static,
 {
     fn from(x: UnnamedMailbox<T>) -> Self {
         DynamicMailbox::new(x.sys, x.msg)
@@ -267,7 +267,7 @@ where
 
 // #[async_trait]
 // impl<T> Mailbox<T> for DynamicMailbox
-// where T: Clone + Sync + Send + 'static {
+// where T: Clone + Send + 'static {
 
 //     async fn send(&mut self, msg: T) -> Result<(), MailboxSendError<T>> {
 //         if let Some(mb) = self.msg.downcast_mut::<mpsc::Sender<T>>() {
@@ -313,7 +313,7 @@ impl ActorDirectory {
         name: &str,
     ) -> Result<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>), ResolutionError>
     where
-        T: Send + Sync + 'static,
+        T: Send + 'static,
     {
         self.map
             .get(name)
@@ -329,7 +329,7 @@ impl ActorDirectory {
         name: &str,
     ) -> Result<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>), ResolutionError>
     where
-        T: Send + Sync + 'static,
+        T: Send + 'static,
     {
         ACTOR_DIRECTORY
             .read()
@@ -346,7 +346,7 @@ impl ActorDirectory {
 
     fn register<T>(name: String, senders: (mpsc::Sender<SystemMessage>, mpsc::Sender<T>))
     where
-        T: Send + Sync + 'static,
+        T: Send + 'static,
     {
         ACTOR_DIRECTORY
             .write()

@@ -31,8 +31,8 @@ impl RestartPolicy {
 }
 
 pub trait Actor: Send + 'static {
-    type Arg: Clone + Send + Sync + 'static;
-    type Message: Send + Sync + 'static;
+    type Arg: Clone + Sync + Send + 'static;
+    type Message: Send + 'static;
 
     fn start(
         sup: Option<&SupervisorMailbox>,
@@ -826,7 +826,7 @@ mod tests {
 
         async fn assert_child_works<T>(child: Child, value: T)
         where
-            T: Send + Sync + Copy + Eq + std::fmt::Debug + 'static,
+            T: Send + Copy + Eq + std::fmt::Debug + 'static,
         {
             let mut mb = child
                 .mailbox

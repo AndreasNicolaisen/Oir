@@ -43,8 +43,8 @@ pub fn request_actor<T, U, M>(
     tokio::task::JoinHandle<()>,
 )
 where
-    T: Send + Sync + 'static,
-    U: Send + Sync + 'static,
+    T: Send + 'static,
+    U: Send + 'static,
     M: RequestHandler<T, U> + Send + 'static,
 {
     let (ss, mut rs) = mpsc::channel::<SystemMessage>(512);
@@ -131,8 +131,8 @@ impl<K, V> Stactor<K, V> {
 
 impl<K, V> Actor for Stactor<K, V>
 where
-    K: Send + Sync + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
-    V: Send + Sync + Clone + std::fmt::Debug + 'static,
+    K: Send + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
+    V: Send + Clone + std::fmt::Debug + 'static,
 {
     type Arg = ();
     type Message = (oneshot::Sender<Option<V>>, StoreRequest<K, V>);
@@ -148,8 +148,8 @@ where
 #[async_trait]
 impl<K, V> RequestHandler<StoreRequest<K, V>, Option<V>> for Stactor<K, V>
 where
-    K: Send + Sync + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
-    V: Send + Sync + Clone + std::fmt::Debug + 'static,
+    K: Send + Clone + std::cmp::Eq + std::hash::Hash + std::fmt::Debug + 'static,
+    V: Send + Clone + std::fmt::Debug + 'static,
 {
     async fn on_request(
         &mut self,
