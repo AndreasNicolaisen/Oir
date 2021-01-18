@@ -19,6 +19,7 @@
 \section{Background \& Analysis}
 \textit{What's OTP?}
 \begin{itemize}
+\item What is the actor model
 \item What is the goal of OTP?
 \item What are the ``design principles'' of OTP?
 \item How is it used?
@@ -68,7 +69,53 @@ An implementation of an OTP-alike library will have to contain functionality in 
   some of them)
 \end{itemize}
 
-We have decided to make our implementaion asynchronous, 
+We've designed our library to be implemented with an asynchronous execution model.
+This is because any pratical implementation of an actor model requires actors to
+be able to send messages asynchronously. It is not necessarily a requirement for
+actors to run concurrently. By making our library asynchronous we enable the
+implementation to take advantage of cooperative multi-threading via
+``green threads'', which can both work in single-threaded and multi-threaded
+contexts. Green threads are also a more light-weight alternative to using
+operating system threads, which is important because idiomatic use of the actor
+model involves creating actors for even small tasks. If creating an actor
+required starting an operating system thread, then the overhead would quite
+signficant compared to green threads.
+
+% What is actor?
+Actors in our library are realized as isolated computations % ?: Word choice
+which receive and acts upon messages sent to them through their mailboxes.
+
+Mailboxes are objects that enables the sending of messages to an actor, and are
+comparable to PIDs in Erlang. We've opted to not hide mailboxes behind an
+indirection like a PID and instead make actors use and store the data-structure
+required for the actual sending of message directly. This is done to avoid
+having to do extra book-keeping (like maintaining a --- possibly global --- map
+of PID to the data-structure required for sending message). This is at the cost
+of having to possibly store more data per mailbox compared to PID and having to
+clone the mailbox whenever it needs to be sent to another actor (which is
+required due to Rust's ownership system).
+
+All actors can receive two kinds of messages. The first being system messages
+which pertain to system-level concerns.
+Currently this only involves requesting an actor to shut down, but other general
+functionality like requesting a notification upon the actor shutting down could
+also fall under system messages. In addition to system messages, actors can also
+receive messages of their own specific message type. The message type of an
+actor is specified as part of the actor's implementation. The only requirement for an
+actor's message type is that is it transferable between threads, i.e. it
+implements/satisfies the \texttt{Send} trait in Rust. This requirement allows
+actors to run on seperate threads. Though by only having this requirement we do
+not have the required invariants to allow for inter-process or remote
+communication between actors, since that would require that messages were also
+serializable.
+
+Actors are responsible for acting upon the messages they receive. This is mainly
+inteded to be done through behaivors which in our library is the equivalent
+concept as in OTP. In our library behaivors are realized as different traits
+with methods for the user to implement their own business
+logic and usually a helper function for starting actors implementing that behaivor.
+% TODO: Introduce behaivors from Erlang in Background
+
 \begin{itemize}
 \item \textbf{Message sending}\\
   We have opted to statically type messages. This means that each actor can only
