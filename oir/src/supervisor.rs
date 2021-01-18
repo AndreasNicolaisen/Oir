@@ -246,7 +246,7 @@ impl SupervisorState {
                 loop {
                     match self.join_receiver.recv().await {
                         Some((j, jr)) if j == cs.local_id => {
-                            break jr;
+                            break;
                         }
                         Some(x) => {
                             self.joins_queue.push_back(x);
