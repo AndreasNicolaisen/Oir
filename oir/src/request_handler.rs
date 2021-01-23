@@ -168,14 +168,22 @@ where
                     Ok(NoReply)
                 }
             }
-            StoreRequest::Set(key, value) => match self.store.entry(key.clone()) {
-                Entry::Occupied(mut e) => Ok(Reply(Some(e.insert(value)))),
-                Entry::Vacant(e) => {
-                    for (id, _) in self.pending.drain_filter(|&mut (_id, ref k)| k == &key) {
-                        let _ = deferred_sender.send((id, Some(value.clone()))).await;
+            StoreRequest::Set(key, value) => {
+                let k = key.clone();
+                match self.store.entry(k) {
+                    Entry::Occupied(mut e) => Ok(Reply(Some(e.insert(value)))),
+                    Entry::Vacant(e) => {
+                        // Collect so we don't hold reference to key across await barriers
+                        let pending_ids = self.pending
+                            .drain_filter(|&mut (_id, ref k)| k == &key)
+                            .collect::<Vec<_>>();
+                        for (id, _) in pending_ids {
+                            let resp = (id, Some(value.clone()));
+                            let _ = deferred_sender.send(resp).await;
+                        }
+                        e.insert(value);
+                        Ok(Reply(None))
                     }
-                    e.insert(value);
-                    Ok(Reply(None))
                 }
             },
         }
