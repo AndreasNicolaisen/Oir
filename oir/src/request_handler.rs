@@ -28,6 +28,8 @@ where
     T: Send + 'static,
     U: Send + 'static,
 {
+    async fn init(&mut self, mb: UnnamedMailbox<(oneshot::Sender<U>, T)>) {}
+
     async fn on_request(
         &mut self,
         deferred_sender: &mut mpsc::Sender<(RequestId, U)>,
@@ -50,12 +52,15 @@ where
     let (ss, mut rs) = mpsc::channel::<SystemMessage>(512);
     let (sp, mut rp) = mpsc::channel::<(oneshot::Sender<U>, T)>(512);
 
+    let mb = UnnamedMailbox::new(ss, sp);
     (
-        UnnamedMailbox::new(ss, sp),
+        mb.clone(),
         tokio::spawn(async move {
             use Response::*;
             let mut pending = HashMap::new();
             let (mut lss, mut lsr) = mpsc::channel::<(RequestId, U)>(512);
+
+            actor.init(mb).await;
 
             let reason;
             'outer: loop {
