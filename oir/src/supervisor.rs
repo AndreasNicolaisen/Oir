@@ -473,6 +473,21 @@ impl Actor for SupervisorState {
     }
 }
 
+pub async fn which_children(sup: &mut SupervisorMailbox) -> Option<Vec<Child>> {
+    let (ss, rs) = oneshot::channel();
+    sup.send(SupervisorRequest::WhichChildren(ss)).await.ok()?;
+    let r = rs.await.ok()?;
+    Some(r)
+}
+
+
+pub async fn start_child(sup: &mut SupervisorMailbox, cs: ChildSpec) -> Option<Child> {
+    let (ss, rs) = oneshot::channel();
+    sup.send(SupervisorRequest::StartChild(ss, cs)).await.ok()?;
+    let r = rs.await.ok()?;
+    Some(r)
+}
+
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub enum RestartStrategy {
     OneForOne,
@@ -819,10 +834,7 @@ mod tests {
             ],
         );
 
-        let (crs, crr) = oneshot::channel();
-        let request = SupervisorRequest::WhichChildren(crs);
-        rs.send(request).await;
-        let mut children = crr.await.unwrap();
+        let mut children = which_children(&mut rs).await.unwrap();
 
         async fn assert_child_works<T>(child: Child, value: T)
         where
@@ -858,6 +870,20 @@ mod tests {
     async fn supervisor_start_child_test() {
         let (mut rs, h) = supervise(RestartStrategy::OneForOne, vec![]);
 
+        let child = start_child(&mut rs, child::<Stactor<i32, i32>>(RestartPolicy::Transient, ())).await.unwrap();
+        let mut mb = child
+            .mailbox
+            .into_typed::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>()
+            .unwrap();
+
+        let (rs, rr) = oneshot::channel();
+        mb.send((rs, StoreRequest::Set(3, 1))).await.unwrap();
+        assert_eq!(Ok(None), rr.await);
+
+        let (rs, rr) = oneshot::channel();
+        mb.send((rs, StoreRequest::Get(3))).await.unwrap();
+        assert_eq!(Ok(Some(1)), rr.await);
+    }
         let (crs, crr) = oneshot::channel();
         let request = SupervisorRequest::StartChild(
             crs,
