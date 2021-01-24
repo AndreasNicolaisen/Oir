@@ -79,12 +79,14 @@ contexts. Green threads are a more light-weight alternative to using
 operating system threads, which is important because idiomatic use of the actor
 model often involves creating actors for even small tasks. If creating an actor
 required starting an operating system thread, then the overhead would be quite
-signficant compared to green threads.
+signficant compared to green threads.\\
 
 % What is actor?
+\noindent
 Actors in our library are realized as isolated computations % ?: Word choice
-which receive and acts upon messages sent to them through their mailboxes.
+which receive and acts upon messages sent to them through their mailboxes.\\
 
+\noindent
 Mailboxes are objects that enables the sending of messages to an actor, and are
 comparable to PIDs in Erlang. We've opted to not hide mailboxes behind an
 indirection like a PID and instead make actors use and store the data-structure
@@ -93,8 +95,9 @@ having to do extra book-keeping (like maintaining a --- possibly global --- map
 of PID to the data-structure required for sending message). This is at the cost
 of having to possibly store more data per mailbox compared to PID and having to
 clone the mailbox whenever it needs to be sent to another actor (which is
-required due to Rust's ownership system).
+required due to Rust's ownership system).\\
 
+\noindent
 All actors can receive two kinds of messages. The first being system messages
 which pertain to system-level concerns, currently this only involves requesting
 an actor to shut down. In addition to system messages, actors can also
@@ -105,8 +108,9 @@ implements/satisfies the \texttt{Send} trait in Rust. This requirement allows
 actors to run on seperate threads. Though by only having this requirement we do
 not have the required invariants to allow for inter-process or remote
 communication between actors, since that would require that messages were also
-serializable.
+serializable.\\
 
+\noindent
 Actors are responsible for acting upon the messages they receive. This is mainly
 inteded to be done through behaivors which in our library is the equivalent
 concept as in OTP. In our library behaivors are realized as different traits
@@ -131,7 +135,7 @@ helper function for starting actors implementing that behaivor.
   It can only be used for sending system messages, until the user tries to casts
   it to a concrete type. This allows the user to handle them without caring
   about the underlying message type.
-\item \textbf{Actor naming}
+\item \textbf{Actor naming}\\
   There are two forms of naming of actors, global and local, both before the
   child was started. The names are used for two different purposes, for
   differenting between actors locally, and for aquiring a reference to an actor.
@@ -144,7 +148,7 @@ helper function for starting actors implementing that behaivor.
   its supervisor on startup. This global registration is useful for commucating
   with often used actors, without having to acquire a reference to its mailbox
   through other means. 
-\item \textbf{Supervision}
+\item \textbf{Supervision}\\
   Our design of supervision breaks into two parts, how the user specifies it and
   how they interact with it. We have chosen to use a declarative approch when
   specifying how supervision should be created, in order to aliviate the user
@@ -156,7 +160,7 @@ helper function for starting actors implementing that behaivor.
   other actors in the supervision tree, without having to resort to global
   naming.
   \begin{itemize}
-  \item \textbf{Supervisor - Specification}
+  \item \textbf{Supervisor - Specification}\\
     In order to make it easier for the user, supervision trees can be created
     declaretivly, using a specification api. This consist of building blocks of
     supervisors and workers, which are put into a tree.
@@ -165,7 +169,7 @@ helper function for starting actors implementing that behaivor.
     specications. A worker will need some restart policy, and also takes an
     starting argument. Both supervisors and workers can be named, either locally
     or globally.
-  \item \textbf{Supervisor - Interaction}
+  \item \textbf{Supervisor - Interaction}\\
     When interacting with a supervisor, it is important to note that supervisors
     themselves are actors, just like workers. This means that they can receive
     messages like any other actor. They can receive system messages asking them to
@@ -174,7 +178,7 @@ helper function for starting actors implementing that behaivor.
     child, given a specification. All children are given a mailbox to their
     supervisor, so that they can make these requests of them.
   \end{itemize}
-\item \textbf{Behaviours}
+\item \textbf{Behaviours}\\
   The concept of behavious from OTP are implemented as traits, that should be
   implemented in order to fulfill the behaviour. This will consist of a number
   of methods that should be implemented, and they (the traits) will often be
@@ -182,7 +186,7 @@ helper function for starting actors implementing that behaivor.
   common boiler plate functionality (eg. the handeling of system messages). When
   a message passed the the actor is not part of the boiler plate, the behaviour
   will pass this message onto implementation of the trait.
-\item \textbf{Asynchronous exceptions} % TODO: Make name better
+\item \textbf{Asynchronous exceptions}\\ % TODO: Make name better
   Unlike in Erlang, actors can't kill each other directly. Instead each
   actors can request that an other actors shuts itself down. The handeling of
   this message will then take place in library code, to avoid usercode from
