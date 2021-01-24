@@ -62,13 +62,11 @@ where
 
             actor.init(mb).await;
 
-            let reason;
             'outer: loop {
                 tokio::select! {
                     sys_msg = rs.recv() => {
                         match sys_msg {
                             Some(SystemMessage::Shutdown) => {
-                                reason = ShutdownReason::Shutdown;
                                 break 'outer;
                             },
                             _ => {}
@@ -78,21 +76,14 @@ where
                         if let Some((respond_sender, msg)) = request_msg {
                             let result;
                             let request_id = RequestId(Uuid::new_v4());
-                            match actor.on_request(&mut lss, request_id, msg).await {
-                                Ok(Reply(r)) => {
+                            match actor.on_request(&mut lss, request_id, msg).await.unwrap() {
+                                Reply(r) => {
                                     result = r;
 
-                                    if respond_sender.send(result).is_err() {
-                                        reason = ShutdownReason::Crashed;
-                                        break 'outer;
-                                    }
+                                    respond_sender.send(result);
                                 },
-                                Ok(NoReply) => {
+                                NoReply => {
                                     pending.insert(request_id, respond_sender);
-                                }
-                                Err(_err) => {
-                                    reason = ShutdownReason::Crashed;
-                                    break 'outer;
                                 },
                             }
                         }
@@ -103,8 +94,7 @@ where
                                 .remove(&request_id)
                                 .and_then(|reply_sender| reply_sender.send(result).ok())
                             {
-                                reason = ShutdownReason::Crashed;
-                                break 'outer;
+                                panic!("Replied to already handled/non-exstitant request");
                             }
                         }
                     }
