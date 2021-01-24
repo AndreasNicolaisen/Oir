@@ -108,16 +108,29 @@ implements/satisfies the \texttt{Send} trait in Rust. This requirement allows
 actors to run on seperate threads. Though by only having this requirement we do
 not have the required invariants to allow for inter-process or remote
 communication between actors, since that would require that messages were also
-serializable.\\
+serializable. The reason we choose to have the system messages as a seperate
+thing, is to make it easier to deal with actors of different types, in contexts
+where their type is irrelevant (such as in the supervisor implementaiton). In
+hindsight, this is properly an unnecesarry complication, since all messages
+could be wrapped in an some sort of \texttt{Either<SystemMessage, MessageType>},
+or \texttt{SystemMessage} could have another variant containing the actors
+message type. This would require more conversion in the background, but from the
+users perspective, it should properly be easier to use, and we wouldn't have to
+store/use two channels for each mailbox. On the other hand, having the two kinds
+of messages in seperate channels, makes it easier to prioritise system message,
+without having to go through all pending messages.\\
 
 \noindent
 Actors are responsible for acting upon the messages they receive. This is mainly
 inteded to be done through behaivors which in our library is the equivalent
 concept as in OTP. In our library behaivors are realized as different traits
 with methods for the user to implement their own business logic and usually a
-helper function for starting actors implementing that behaivor.
+helper function for starting actors implementing that behaivor.\\
 % TODO: Introduce behaivors from Erlang in Background
 
+\noindent
+Given this context, we will explain our design of different parts, in more
+specific terms:
 \begin{itemize}
 \item \textbf{Mailboxes}\\
   %% We have opted to statically type messages. This means that each actor can only
