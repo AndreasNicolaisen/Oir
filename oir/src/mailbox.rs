@@ -91,7 +91,7 @@ where
             .map_or(true, |(_, ref s)| s.is_closed())
         {
             ActorDirectory::resolve(&self.name).map(|senders| {
-                self.senders = Some(senders);
+                self.senders = Some((senders.sys, senders.msg));
             })
         } else {
             Ok(())
@@ -171,7 +171,7 @@ where
     }
 
     pub fn register(self, name: String) -> NamedMailbox<T> {
-        ActorDirectory::register(name.clone(), (self.sys.clone(), self.msg.clone()));
+        ActorDirectory::register(name.clone(), self.clone());
         NamedMailbox {
             name,
             senders: Some((self.sys, self.msg)),
@@ -254,6 +254,10 @@ impl DynamicMailbox {
         // NOTE: We don't check msg because we don't know its actual type here
         self.sys.is_closed()
     }
+
+    pub fn register(&self, name: String) {
+        ActorDirectory::register(name, self.clone());
+    }
 }
 
 impl<T> From<UnnamedMailbox<T>> for DynamicMailbox
@@ -298,7 +302,7 @@ pub enum ResolutionError {
 
 #[derive(Debug)]
 pub struct ActorDirectory {
-    map: HashMap<String, Box<dyn Any + Sync + Send + 'static>>,
+    map: HashMap<String, DynamicMailbox>,
 }
 
 lazy_static! {
@@ -311,14 +315,14 @@ impl ActorDirectory {
     fn resolve_name<T>(
         &self,
         name: &str,
-    ) -> Result<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>), ResolutionError>
+    ) -> Result<UnnamedMailbox<T>, ResolutionError>
     where
         T: Send + 'static,
     {
         self.map
             .get(name)
             .map_or(Err(ResolutionError::NameNotFound), |res| {
-                res.downcast_ref::<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>)>()
+                res.clone().into_typed::<T>()
                     .map_or(Err(ResolutionError::WrongType), |senders| {
                         Ok(senders.clone())
                     })
@@ -327,7 +331,7 @@ impl ActorDirectory {
 
     fn resolve<T>(
         name: &str,
-    ) -> Result<(mpsc::Sender<SystemMessage>, mpsc::Sender<T>), ResolutionError>
+    ) -> Result<UnnamedMailbox<T>, ResolutionError>
     where
         T: Send + 'static,
     {
@@ -336,7 +340,7 @@ impl ActorDirectory {
             .unwrap()
             .resolve_name(name)
             .and_then(|res| {
-                if res.1.is_closed() {
+                if res.is_closed() {
                     Err(ResolutionError::NameNotFound)
                 } else {
                     Ok(res)
@@ -344,15 +348,15 @@ impl ActorDirectory {
             })
     }
 
-    fn register<T>(name: String, senders: (mpsc::Sender<SystemMessage>, mpsc::Sender<T>))
+    fn register<M>(name: String, mb: M)
     where
-        T: Send + 'static,
+        M: Into<DynamicMailbox>
     {
         ACTOR_DIRECTORY
             .write()
             .unwrap()
             .map
-            .insert(name, Box::new(senders));
+            .insert(name, mb.into());
     }
 }
 
@@ -365,7 +369,7 @@ mod tests {
         let (ss, ssr) = mpsc::channel::<SystemMessage>(1);
         let (sm, smr) = mpsc::channel::<i32>(1);
         let name = gensym();
-        ActorDirectory::register(name.clone(), (ss, sm));
+        ActorDirectory::register(name.clone(), DynamicMailbox::new(ss, sm));
         ActorDirectory::resolve::<i32>(&name).unwrap();
     }
 
@@ -379,10 +383,10 @@ mod tests {
 
     #[test]
     fn resolve_wrong_type() {
-        let (ss, _) = mpsc::channel::<SystemMessage>(1);
+        let (ss, rs) = mpsc::channel::<SystemMessage>(1);
         let (sm, _) = mpsc::channel::<i32>(1);
         let name = gensym();
-        ActorDirectory::register(name.clone(), (ss, sm));
+        ActorDirectory::register(name.clone(), DynamicMailbox::new(ss, sm));
 
         assert_eq!(
             ResolutionError::WrongType,
@@ -392,10 +396,10 @@ mod tests {
 
     #[tokio::test]
     async fn mailbox_send() {
-        let (ss, _) = mpsc::channel::<SystemMessage>(2);
+        let (ss, rs) = mpsc::channel::<SystemMessage>(2);
         let (sm, mut rm) = mpsc::channel::<i32>(2);
         let name = gensym();
-        ActorDirectory::register(name.clone(), (ss, sm));
+        ActorDirectory::register(name.clone(), DynamicMailbox::new(ss, sm));
 
         let mut mailbox = NamedMailbox::new(name);
 
@@ -419,10 +423,10 @@ mod tests {
 
     #[tokio::test]
     async fn mailbox_send_to_closed() {
-        let (ss, _) = mpsc::channel::<SystemMessage>(2);
+        let (ss, rs) = mpsc::channel::<SystemMessage>(2);
         let (sm, mut rm) = mpsc::channel::<i32>(2);
         let name = gensym();
-        ActorDirectory::register(name.clone(), (ss, sm));
+        ActorDirectory::register(name.clone(), DynamicMailbox::new(ss, sm));
 
         let mut mailbox = NamedMailbox::new(name);
 
@@ -440,10 +444,10 @@ mod tests {
 
     #[tokio::test]
     async fn mailbox_send_to_reregistered() {
-        let (ss1, _) = mpsc::channel::<SystemMessage>(2);
+        let (ss1, rs1) = mpsc::channel::<SystemMessage>(2);
         let (sm1, mut rm1) = mpsc::channel::<i32>(2);
         let name = gensym();
-        ActorDirectory::register(name.clone(), (ss1, sm1));
+        ActorDirectory::register(name.clone(), DynamicMailbox::new(ss1, sm1));
 
         let mut mailbox = NamedMailbox::new(name.clone());
 
@@ -451,9 +455,9 @@ mod tests {
         assert_eq!(1, rm1.recv().await.unwrap());
         rm1.close();
 
-        let (ss2, _) = mpsc::channel::<SystemMessage>(2);
+        let (ss2, rs2) = mpsc::channel::<SystemMessage>(2);
         let (sm2, mut rm2) = mpsc::channel::<i32>(2);
-        ActorDirectory::register(name, (ss2, sm2));
+        ActorDirectory::register(name, DynamicMailbox::new(ss2, sm2));
 
         mailbox.send(2).await.unwrap();
         assert_eq!(2, rm2.recv().await.unwrap());
@@ -461,10 +465,10 @@ mod tests {
 
     #[tokio::test]
     async fn mailbox_send_to_reregistered_and_retyped() {
-        let (ss1, _) = mpsc::channel::<SystemMessage>(2);
+        let (ss1, rs1) = mpsc::channel::<SystemMessage>(2);
         let (sm1, mut rm1) = mpsc::channel::<i32>(2);
         let name = gensym();
-        ActorDirectory::register(name.clone(), (ss1, sm1));
+        ActorDirectory::register(name.clone(), DynamicMailbox::new(ss1, sm1));
 
         let mut mailbox = NamedMailbox::new(name.clone());
 
@@ -472,9 +476,9 @@ mod tests {
         assert_eq!(1, rm1.recv().await.unwrap());
         rm1.close();
 
-        let (ss2, _) = mpsc::channel::<SystemMessage>(2);
+        let (ss2, rs2) = mpsc::channel::<SystemMessage>(2);
         let (sm2, mut rm2) = mpsc::channel::<i64>(2);
-        ActorDirectory::register(name, (ss2, sm2));
+        ActorDirectory::register(name, DynamicMailbox::new(ss2, sm2));
 
         assert!(matches!(
             mailbox.send(2).await,
@@ -486,7 +490,7 @@ mod tests {
 
     #[tokio::test]
     async fn mailbox_register_unnamed() {
-        let (ss1, _) = mpsc::channel::<SystemMessage>(2);
+        let (ss1, rs1) = mpsc::channel::<SystemMessage>(2);
         let (sm1, mut rm1) = mpsc::channel::<i32>(2);
         let mut unnamed_mailbox = UnnamedMailbox::new(ss1, sm1);
 
