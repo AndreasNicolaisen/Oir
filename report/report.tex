@@ -62,12 +62,12 @@ An implementation of an OTP-alike library will have to contain functionality in 
 % TODO: Talk about local and global naming
 
 \section{Design}
-\begin{itemize}
-\item Talk about what an OTP implementation overall consists of (in general)
-\item Talk about our high-level design decisions
-\item Talk about what design experiments we did (And explain why we went back on
-  some of them)
-\end{itemize}
+%% \begin{itemize}
+%% \item Talk about what an OTP implementation overall consists of (in general)
+%% \item Talk about our high-level design decisions
+%% \item Talk about what design experiments we did (And explain why we went back on
+%%   some of them)
+%% \end{itemize}
 
 We've designed our library to be implemented with an asynchronous execution model.
 This is because any pratical implementation of an actor model requires actors to
@@ -75,10 +75,10 @@ be able to send messages asynchronously. It is not necessarily a requirement for
 actors to run concurrently. By making our library asynchronous we enable the
 implementation to take advantage of cooperative multi-threading via
 ``green threads'', which can both work in single-threaded and multi-threaded
-contexts. Green threads are also a more light-weight alternative to using
+contexts. Green threads are a more light-weight alternative to using
 operating system threads, which is important because idiomatic use of the actor
-model involves creating actors for even small tasks. If creating an actor
-required starting an operating system thread, then the overhead would quite
+model often involves creating actors for even small tasks. If creating an actor
+required starting an operating system thread, then the overhead would be quite
 signficant compared to green threads.
 
 % What is actor?
@@ -96,13 +96,11 @@ clone the mailbox whenever it needs to be sent to another actor (which is
 required due to Rust's ownership system).
 
 All actors can receive two kinds of messages. The first being system messages
-which pertain to system-level concerns.
-Currently this only involves requesting an actor to shut down, but other general
-functionality like requesting a notification upon the actor shutting down could
-also fall under system messages. In addition to system messages, actors can also
+which pertain to system-level concerns, currently this only involves requesting
+an actor to shut down. In addition to system messages, actors can also
 receive messages of their own specific message type. The message type of an
-actor is specified as part of the actor's implementation. The only requirement for an
-actor's message type is that is it transferable between threads, i.e. it
+actor is specified as part of the actor's implementation. The only requirement
+for an actor's message type is that is it transferable between threads, i.e. it
 implements/satisfies the \texttt{Send} trait in Rust. This requirement allows
 actors to run on seperate threads. Though by only having this requirement we do
 not have the required invariants to allow for inter-process or remote
@@ -112,35 +110,40 @@ serializable.
 Actors are responsible for acting upon the messages they receive. This is mainly
 inteded to be done through behaivors which in our library is the equivalent
 concept as in OTP. In our library behaivors are realized as different traits
-with methods for the user to implement their own business
-logic and usually a helper function for starting actors implementing that behaivor.
+with methods for the user to implement their own business logic and usually a
+helper function for starting actors implementing that behaivor.
 % TODO: Introduce behaivors from Erlang in Background
 
 \begin{itemize}
-\item \textbf{Message sending}\\
-  We have opted to statically type messages. This means that each actor can only
-  receive messages of its data type, as well as ``System messages''. Message
-  sending is accomplished using ``Mailboxes''. Using these actors can
-  send the 2 kinds of messages to each other. There 3 kinds of mailboxes,
-  unnamed, named and dynamic. Unnamed mailboxes are the main kind of mailbox,
-  which allows the actors to send system messages and data messages to each
-  other. Should the receiving actor crash, trying to send a message to it, using
-  an unnamed mailbox, will result in an error. Named mailboxes are an
-  indirection over unnamed mailboxes, used for sending messages to an actor that
-  is registered globally with a name. These 2 first kind of mailboxes are typed
-  over the message type. The dynamic mailbox is mainly used in situations where
-  multiple different actor types can occur. % TODO: Add example (which children)
+\item \textbf{Mailboxes}\\
+  %% We have opted to statically type messages. This means that each actor can only
+  %% receive messages of its data type, as well as ``System messages''. Message
+  %% sending is accomplished using ``Mailboxes''. Using these actors can
+  %% send the 2 kinds of messages to each other. 
+  There 3 kinds of mailboxes, unnamed, named and dynamic. Unnamed mailboxes are
+  the main kind of mailbox, which allows the actors to send system messages and
+  data messages to each other. Should the receiving actor crash, trying to send
+  a message to it, using an unnamed mailbox, will result in an error. Named
+  mailboxes are an indirection over unnamed mailboxes, used for sending messages
+  to an actor that is registered globally with a name. These 2 first kind of
+  mailboxes are typed over the message type. The dynamic mailbox is mainly used
+  in situations where multiple different actor types can occur. % TODO: Add example (which children)
   It can only be used for sending system messages, until the user tries to casts
   it to a concrete type. This allows the user to handle them without caring
   about the underlying message type.
 \item \textbf{Actor naming}
-  There are 2 forms of naming of actors, global and local. An actor's mailbox
-  can be registered to a global name, then, through name-resolution, any actor
-  can resolve the mailbox to that name. This useful for commucating with often
-  used actors, without having to acquire its mailbox through other mean. Local
-  naming is used when supervisors has to refer to its children. When actors are
-  globally named, the name will be used locally as well. Not all actors have to
-  be explicitly named, and when they're not they are given a unique local name.
+  There are two forms of naming of actors, global and local, both before the
+  child was started. The names are used for two different purposes, for
+  differenting between actors locally, and for aquiring a reference to an actor.
+  An actor can ask a supervirsor (usually its own) for a list of its children.
+  The supervisor then replies with a list of its' children, consisting of the
+  child's name, and the child's mailbox. These names will be the names that
+  where given before the child was started (either global or local). If a child
+  is not given a name, it will be assigned one by its supervisor. If a child is
+  globally named, it will additonally have its mailbox globally registered by
+  its supervisor on startup. This global registration is useful for commucating
+  with often used actors, without having to acquire a reference to its mailbox
+  through other means. 
 \item \textbf{Supervision}
   Our design of supervision breaks into two parts, how the user specifies it and
   how they interact with it. We have chosen to use a declarative approch when
@@ -155,14 +158,13 @@ logic and usually a helper function for starting actors implementing that behaiv
   \begin{itemize}
   \item \textbf{Supervisor - Specification}
     In order to make it easier for the user, supervision trees can be created
-    declaretivly, using a specication api. This consist of building blocks of
+    declaretivly, using a specification api. This consist of building blocks of
     supervisors and workers, which are put into a tree.
     % TODO: Insert example (diagram and code example)
-    A supervisor will need some restart strategy, as well as vector of child
+    A supervisor will need some restart strategy, as well as list of child
     specications. A worker will need some restart policy, and also takes an
     starting argument. Both supervisors and workers can be named, either locally
-    or globally. Local names are only used when interacting with the supervisors
-    of the named actor. % TODO: Add reasoning
+    or globally.
   \item \textbf{Supervisor - Interaction}
     When interacting with a supervisor, it is important to note that supervisors
     themselves are actors, just like workers. This means that they can receive
@@ -173,17 +175,27 @@ logic and usually a helper function for starting actors implementing that behaiv
     supervisor, so that they can make these requests of them.
   \end{itemize}
 \item \textbf{Behaviours}
-  The concept of behavious are implemented as traits, that should be implemented
-  in order to fulfill the behaviour. This will consist of a number of methods
-  that should be implemented, and they (the traits) will often over a type. They
-  will often often with a helper methods that provides the common boiler plate
-  functionality. When a message passed the the actor is not part of the boiler
-  plate, the behaviour will pass this message unto implementation of the trait.
+  The concept of behavious from OTP are implemented as traits, that should be
+  implemented in order to fulfill the behaviour. This will consist of a number
+  of methods that should be implemented, and they (the traits) will often be
+  over a type. They will often come with a helper method that provides the
+  common boiler plate functionality (eg. the handeling of system messages). When
+  a message passed the the actor is not part of the boiler plate, the behaviour
+  will pass this message onto implementation of the trait.
 \item \textbf{Asynchronous exceptions} % TODO: Make name better
   Unlike in Erlang, actors can't kill each other directly. Instead each
   actors can request that an other actors shuts itself down. The handeling of
   this message will then take place in library code, to avoid usercode from
-  simply ignoring the request.
+  simply ignoring the request. Since the messages are handled sequentially this
+  means that actors cannot be shut down when they are handeling another
+  messages. This has the advantage of avoiding actors being shutdown in crital
+  sections, but has the disadvantage of not being able to shutdown an actor that
+  is stuck. This is the only practical way of shutting down an actor, since it
+  is not possible to stop a scheduled task. One way shutting down a running
+  actor \textit{could} be done, it to have each actor be its own seperate OS
+  thread, which you could then ask the OS to shutdown. The comes with the
+  downside mentioned earlier, of not being able to take advantage of ``green
+  threads''.
 \end{itemize}
 
 \section{Implementation}
