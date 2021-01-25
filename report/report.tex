@@ -17,50 +17,77 @@
 \section{Introduction}
 
 \section{Background \& Analysis}
-\textit{What's OTP?}
-\begin{itemize}
-\item What is the actor model
-\item What is the goal of OTP?
-\item What are the ``design principles'' of OTP?
-\item How is it used?
-\end{itemize}
+%% \textit{What's OTP?}
+%% \begin{itemize}
+%% \item What is the actor model
+%% \item What is the goal of OTP?
+%% \item What are the ``design principles'' of OTP?
+%% \item How is it used?
+%% \end{itemize}
 
-\textit{How does this interact with Erlang}
-\begin{itemize}
-\item What parts of Erlang/BEAM is ``needed'' for implementing OTP? (processes,
-  traps, mailboxes \& etc.)
-\end{itemize}
+%% \textit{How does this interact with Erlang}
+%% \begin{itemize}
+%% \item What parts of Erlang/BEAM is ``needed'' for implementing OTP? (processes,
+%%   traps, mailboxes \& etc.)
+%% \end{itemize}
 
-\textit{Will probably have a similar structure to the Suture blog-post}
-\begin{itemize}
-\item What parts of OTP are we interested in porting.
-\item How does this translate to Rust?
-\item What does Rust make easier/harder?
-\item What different things could an implementation focus on?
-  \textit{Like performance, robustness, idiomaticity, expressiveness, ergonomics}.
+%% \textit{Will probably have a similar structure to the Suture blog-post}
+%% \begin{itemize}
+%% \item What parts of OTP are we interested in porting.
+%% \item How does this translate to Rust?
+%% \item What does Rust make easier/harder?
+%% \item What different things could an implementation focus on?
+%%   \textit{Like performance, robustness, idiomaticity, expressiveness, ergonomics}.
 
-  We'll try to find out whether it \textit{can} be done idiomaticly and ergonomically.
+%%   We'll try to find out whether it \textit{can} be done idiomaticly and ergonomically.
 
-\item What have we chosen to focus on?
-\end{itemize}
+%% \item What have we chosen to focus on?
+%% \end{itemize}
 
-An implementation of an OTP-alike library will have to contain functionality in the lines of:
-\begin{itemize}
-\item \textbf{Message sending}\\
-  The different actors should be able to communicate with each others, using
-  messages. To accomplish this, they will need some way to refer to each other.
-  This could be done by using global ids, registered names or passing around
-  references to each other.
-\item \textbf{Supervisor trees}\\
-  In order to organize the program, the actors should be organized into
-  supervisor trees. These will be trees of supervisor actors, with worker actors
-  as leafes. The supervisors should be able to monitor and restart its children,
-  should they crash, in accordance with supplied strategies and policies.
-\item \textbf{Behaviours}
-\end{itemize}
+%% An implementation of an OTP-alike library will have to contain functionality in the lines of:
+%% \begin{itemize}
+%% \item \textbf{Message sending}\\
+%%   The different actors should be able to communicate with each others, using
+%%   messages. To accomplish this, they will need some way to refer to each other.
+%%   This could be done by using global ids, registered names or passing around
+%%   references to each other.
+%% \item \textbf{Supervisor trees}\\
+%%   In order to organize the program, the actors should be organized into
+%%   supervisor trees. These will be trees of supervisor actors, with worker actors
+%%   as leafes. The supervisors should be able to monitor and restart its children,
+%%   should they crash, in accordance with supplied strategies and policies.
+%% \item \textbf{Behaviours}
+%% \end{itemize}
 
 % TODO: Talk about local and global naming
 
+In the actor model, an application is structured around a collections of
+independent actors. Generally, each actor has the following abilities:
+\begin{itemize}
+\item Each actor has the abiltity to send and receive messages to
+  each other.
+\item The actors can decide to take any actor they desire based on the
+  messages they receive. This includes modifying some state that they hold on to,
+  which can then be used when responding to later messages.
+\item Each actor can spawn new actors.
+\end{itemize}
+
+The actors exist as seperate entities, and should not be able to affect each
+other, unless it is through messaging each other.\\
+
+\noindent
+The message passing itself can be realized in two different ways, synchronous
+and asynchronous. By synchronous, it is understood that when an actors sends an
+other actor a message, it will only continue its execution when the other actor
+has received the message. By asynchronous, it is understood that the message is
+sent much like a letter, in that once we have sent a message we don't know
+when/if the other actor will receive it. In different realizations of the actor
+model, there will be different guarantees as to whether messages will always be
+received, or if they can be lost, as well as what order the messages can be
+in. How the message passing works will also differ. All actors might have some
+address that can be used to send them messages, or be given names that can
+change what they refer to, during the execution of the program.
+  
 \section{Design}
 %% \begin{itemize}
 %% \item Talk about what an OTP implementation overall consists of (in general)
