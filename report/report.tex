@@ -89,7 +89,30 @@ received, or if they can be lost, as well as what order the messages can be
 in. How the message passing works will also differ. All actors might have some
 address that can be used to send them messages, or be given names that can
 change what they refer to, during the execution of the program.
-  
+
+\subsection{Erlang processes}
+As mentioned, in an idiomatic actor model system, a lot of actors are often
+created. This means that we have the possibility to run the actors concurrently,
+but we have to be careful of how we do it. If we were to fx. run each actor on a
+seperate OS thread, we would encounter a large overhead each time a new actor
+are created. Erlang solves this by providing lightweight processes, which only
+take up a small amount of memory when created.\\
+
+\noindent
+This allows us to use a new process for each actor that we want in our system,
+without encountering a large overhead. Each process is equipped with a
+\texttt{PID} (Process IDentifer). If an process (or actor) knows another's PID,
+they can use it send them messages, monitor it, as well as ``kill'' it. Message
+sending is asynchronous, and anything can be sent. The other process can then
+specify what it want to receive at a given time, and how to act based upon the
+message. By monitoring another process, the monitoring process will be notified
+if the monitored processs dies\footnote{Processes can also link to each other,
+but that is beyond the scope if this project}. While this is not part of the
+actor model, it is often quite useful. By sending a special signal, a process
+can ``kill'' another process, which shutdowns the process, no matter what is was
+currently doing. This is useful when organizing actors in
+\textit{supervision trees}, which will be touched on in the next section.
+
 \section{Design}
 %% \begin{itemize}
 %% \item Talk about what an OTP implementation overall consists of (in general)
