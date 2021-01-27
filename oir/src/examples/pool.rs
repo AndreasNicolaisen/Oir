@@ -37,7 +37,7 @@ enum WorkResult {
 }
 
 impl PoolServActor {
-    fn new(num_workers: usize, sup: SupervisorMailbox) -> PoolServActor {
+    fn new(sup: SupervisorMailbox) -> PoolServActor {
         PoolServActor {
             workers: Vec::new(),
             next: 0,
@@ -49,14 +49,14 @@ impl PoolServActor {
 }
 
 impl Actor for PoolServActor {
-    type Arg = usize;
+    type Arg = ();
     type Message = (oneshot::Sender<WorkResult>, PoolServMessage);
 
     fn start(
         sup: Option<&crate::supervisor::SupervisorMailbox>,
-        num_workers: usize,
+        _: (),
     ) -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
-        request_actor(PoolServActor::new(num_workers, sup.expect("pool_serv needs a supervisor").clone()))
+        request_actor(PoolServActor::new(sup.expect("pool_serv needs a supervisor").clone()))
     }
 }
 
@@ -194,7 +194,7 @@ fn pool(
                 RestartStrategy::OneForOne,
                 vec![child::<PoolWorkerActor>(RestartPolicy::Permanent, ()); num_workers],
             ).named(POOL_SUP_NAME.to_string()),
-            child::<PoolServActor>(RestartPolicy::Permanent, num_workers)
+            child::<PoolServActor>(RestartPolicy::Permanent, ())
                 .globally_named(POOL_SERV_NAME.to_owned()),
         ],
     )
