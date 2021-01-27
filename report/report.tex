@@ -155,7 +155,26 @@ user implements their part of the actor.
 %% \item Talk about what design experiments we did (And explain why we went back on
 %%   some of them)
 %% \end{itemize}
+\subsection{Design goals}
+In the design of our library, we have the following goals:
+\begin{itemize}
+\item Implement an OTP-like (or rather, a subset of it) system in Rust in an
+  idiomatic fashion.
+\item Strongly type the messages that the actors will pass to each other.
+\item Allow the user to write idiomatic actor model code in a way that is also
+  idiomatic to Rust.
+\item Enable to user to easily organize their actors in supervisor trees, both
+  in a declarative as well as dynamic fashion.
+\item Make it easy for the user to implement common patterns, without having to
+  worry about how the actors interacts with the supervision tree.
+\end{itemize}
 
+Overall, the aim is to create a library that provides better type-safety than
+what is experienced in Erlang, without making it harder to implement an
+application. This should be accomblished by using Rust's own guarantees, so that
+a programmer experienced with Rust can use it, without a large barrier to entry.
+
+\subsection{Design details}
 We've designed our library to be implemented with an asynchronous execution model.
 This is because any pratical implementation of an actor model requires actors to
 be able to send messages asynchronously. It is not necessarily a requirement for
@@ -262,14 +281,14 @@ specific terms:
   \begin{itemize}
   \item \textbf{Supervisor - Specification}\\
     In order to make it easier for the user, supervision trees can be created
-    declaretivly, using a specification api. This consist of building blocks of
+    declarativly, using a specification api. This consist of building blocks of
     supervisors and workers, which are put into a tree.
     % TODO: Insert example (diagram and code example)
     A supervisor will need some restart strategy, as well as list of child
     specications. A worker will need some restart policy, and also takes an
     starting argument. Both supervisors and workers can be named, either locally
     or globally.
-  \item \textbf{Supervisor - Interaction}\\
+  \item \textbf{Supervisor - Interaction}\\ % TODO: Add monitor
     When interacting with a supervisor, it is important to note that supervisors
     themselves are actors, just like workers. This means that they can receive
     messages like any other actor. They can receive system messages asking them to
