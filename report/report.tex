@@ -243,6 +243,152 @@ specific terms:
 \end{itemize}
 
 \section{Implementation}
+%
+% Immutability (we don't really use it)
+% Runtime choice
+We have chosen to base our implementation on the Tokio library. Tokio provides an
+asynchronous execution runtime, with support for \texttt{Task}s, which are
+light-weight non-blocking execution units. This is especially useful because we
+want the overhead of spawning actors to be low.
+\begin{itemize}
+\item{\bf Mailboxes} \\
+Mailboxes are implemented as an abstraction on top of channels. Channels as a
+concept are both found in the Rust standard library, and in Tokio, and they are a
+mechanism for sending values between threads via a FIFO queue. Specifically, we
+use the multi-producer, single-consumer (\texttt{mpsc}) kind. Such a channel
+consists of a unique \texttt{Receiver}-end and any number of \texttt{Sender}s.
+The actor owns the \texttt{Receiver} end and uses it to accept incoming
+messages, while the \texttt{Sender}s are abstracted over as mailboxes.
+% - Boundedness
+Tokio
+provides two kinds of \texttt{mpsc} channel, bounded and unbounded. Sending
+never blocks for unbounded channels, while bounded ones can only hold a
+specified amount of unhandled messages. We've chosen to use bounded channels
+with a capacity of 512 for our mailbox implementation. While we want message
+sending to be asynchronous --- which unbounded always provide, and bounded only
+does until their capacity is reached --- we've still opted for bounded channels
+with a high capacity because it makes dealing with runway situation easier.
+Instead of simply endlessly sending messages into to the ever-growing queue,
+which could eventually hog all the device's memory, the sender is instead
+(temporarily) blocked or deadlocked, which is easier to debug than a runaway
+resource-consuming program.
+% - bounded debugability
+This choice has mainly been a development practicality choice and were we to
+further develop this library, we would allow the user to specify whether they
+want their mailboxes to be bounded or unbounded, and in the former case with
+what capacity. This should be a relatively easy extension since the actual
+choice of channel is hidden behind our mailbox abstraction.
+
+As mentioned in the design section we have a couple of different types of
+mailboxes. First of all, we have a mailbox trait (called \texttt{Mailbox}) which
+allows for code be generically parametric over which specific type of maiblox it
+deals with. The mailbox trait supports sending messages of the associated
+message type and querying whether the mailbox has been closed. The most commonly
+used mailbox type is the \texttt{UnnamedMailbox}, which simply behaves as an
+abstraction over the underlying channel. The \texttt{NamedMailbox} extends the
+unnamed variety with a naming indirection. While an unnamed mailbox can only be
+acquired by cloning or being sent one, a named one can be acquired by resolving
+a name. A global registry is maintained mapping any registered mailboxes to
+their name. Operations on a named mailbox only succeed if the name can be
+resolved. If the underlying channel of the named mailbox has been closed, upon
+trying to send a message via the mailbox, an attampt is made to re-resolve the name to a
+mailbox of the same type. This re-resolution is done to allow for seamless
+communication with a globally named actor that might have been restarted.
+
+So far the mailboxes we've seen are parameterized over their message type. But in
+some cases, we want to store mailboxes of different message types together.
+Examples of such heterogeneous collections of mailboxes are the globally named
+mailbox registry and supervisors' lists of children. In both cases, neither of
+those perform any operations on the mailboxes that involve their message type.
+In order to allow for heterogeneous storage of mailboxes, we've implemented the
+\texttt{DynamicMailbox} type. It is a non-parametric mailbox which only supports
+operations not involving the underlying mailbox's message type, and a method for
+attempting to convert it back into a typed mailbox (which might fail if the
+underlying message type doesn't match the attempted type). This means that it's
+impossible to send messages of the wrong type. It's implemented by
+storing type-information about the underlying mailbox at runtime, and by storing
+the underlying mailbox in an (owned) separate allocation, such that the layout of
+\texttt{DynamicMailbox}es is homogenous. This introduces a runtime overhead on
+all operations on the dynamic mailbox, but since the most common operation on
+mailboxes is sending typed messages, which only can be done by converting the
+dynamic mailbox into an unnamed one, this is not a big performance concern,
+since that should be a relatively one-off thing in any given scenario.
+
+\item{\bf Supervisors} \\
+Supervisor trees are specified using the \texttt{SupervisorSpec} and
+\texttt{ChildSpec} data-structures. \\ The \texttt{SupervisorSpec} contains the
+supervisor's restart strategy (one-for-one, one-for-all or rest-for-one) and a
+list of \texttt{ChildSpec}s. \texttt{ChildSpec}s contain the child's restart
+policy (permanent, transient or temporary), its global or local name if any,
+its type and initialization argument. \texttt{ChildSpec}s can only be
+constructed using the \texttt{child} function, which is parameterized over a type
+implementing the \texttt{Actor} trait and takes the policy and starting
+argument. The \texttt{Actor} trait is probably poorly named since you can have
+actors that don't implement it. What the \texttt{Actor} trait is responsible for
+is associating a message- and argument-type with a given struct and requiring
+the implementor to define a \texttt{start} method, which takes in an
+initialization argument and a mailbox to the supervisor of the actor being
+started (if one is present). It returns a mailbox to the newly started actor,
+together with a \texttt{JoinHandle} which is the unique token used to await the
+completion of the actor's task. The \texttt{child} function then fills in the
+required information about the actor's type, which allows for heterogeneous
+storage of different actors in the same array of \texttt{ChildSpecs} using the
+same mechanism \texttt{DynamicMailbox} uses. The \texttt{ChildSpec} can then be
+further annotated with either a local or global name using the \texttt{named} and
+\texttt{globally\_named} methods respectively.
+
+This technique allows us to declaratively specify a heterogeneous supervision
+tree as long as all the actors in it implement the \texttt{Actor} trait.
+Supervisors themselves also implement this trait, and their argument type is
+their \texttt{SupervisorSpec}. When a supervisor is started, it then calls each
+child's start method with their specified start argument. If supervisors are
+nested, this results in a recursive depth-first initialization of the
+supervisor-tree.
+
+In a previous iteration of our supervisor implementation, we experimented with
+using a single closure that had all the same responsibilities as the current
+\texttt{ChildSpec}. It would take no arguments, instead possibly capturing any
+arguments used for initialization. It would then be expected to
+initialize, start, register the name of the actor (if any) and return the
+mailbox, join-handle and restart-policy to the supervisor calling. This turned
+out to be very cumbersome and prone causing type- and life-time errors due to
+the nature of closures in Rust. So we instead opted for the more data-structure
+oriented design, and delegated the initialization part to a more fixed scheme
+described above instead of the completely free-form closure design. This not
+only made specifying supervisor trees technically easier, it also made the
+specifications much more readable.
+
+The supervisor actor is implemented as an actor that handles
+requests for operations like listing children, starting new children and
+allowing other actors to be notified of child restarts and shutdowns (we call it
+monitoring). In addition to these external messages, supervisor actors also
+await notifications about the shutdown of their children via the
+\texttt{JoinHandle}. Whenever such a notification is received, it inspects
+whether the shutdown was due to a panic or because the task ran to completion,
+and then decides what sort of restart action (if any) it should take based on
+its own restart strategy and the child's restart policy. Supervisors need to
+await both incoming messages as well as join-handles at the same time, to handle
+whichever comes first. Tokio has a \texttt{select!} operation that allows for
+doing such a thing, but it does not allow for awaiting a dynamic amount of
+join-handles (or any future for that manner) this way. In order to work
+around this limitation, we start a task when starting a new child, whose only
+job is to await on that child's join-handle and send the result to the
+supervisor over a private channel. Then the supervisor only has to listen on a
+single receiver on its own end, while many of these tasks can send their join
+notifications to it.
+
+\end{itemize}
+
+% Registry
+% AnyBox
+% RequestHandler (specifically, why is the deferred_sender mechanism a channel
+%                   and not a queue of some sort?)
+% ChildSpec
+% - How they changed
+% - starter mechanism
+% Supervisor: join-receiving tasks
+
+
 \begin{itemize}
 \item Talk about some concrete implementation decisions (and what drove them)
 \item Go into some (few) low-level technical details that might be interesting
