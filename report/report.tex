@@ -113,6 +113,41 @@ can ``kill'' another process, which shutdowns the process, no matter what is was
 currently doing. This is useful when organizing actors in
 \textit{supervision trees}, which will be touched on in the next section.
 
+\subsection{OTP}
+Developing application with Erlang is most often coupled with using OTP (Open
+Telecom Platform). OTP is a platform consisting of a compiler, libraries,
+middelwares, a database and some tools. What we will be most concerned with is
+supervision trees, and behaviors.
+
+\subsubsection{Supervision trees}
+Supervision trees are a way to organize actors into supervisors and workers, in
+a way that supports reliability. This is under the philosophy that parts of any
+implementation will, from time to time, crash, and it should be setup to handle
+it when it does. An example of a supervision tree can be seen in figure %\autoref{fig:}
+
+%% \begin{figure}[h]
+%%   \includegraphicx{}
+%%   \caption{An example of a supervision tree}
+%% \end{figure}
+
+A supervisor will have a number of children, which can be both workers and other
+supervisors. Should any of a supervisor's children shutdown unexpectedly, the
+supervisor have the responsibility of starting it back up again, if it is
+specified that it should be restarted. Further, the children could have
+interdepencies, so the supervisors can also restart other children than the ones
+who shutdown unexpectedly.
+
+\subsubsection{Behaviors}
+In an actor model system, many actors will often follow similar patterns. For
+example, all of the supervisors in a tree will follow a similar patterns, some
+actors will be simple servers, some will be state machines, etc. Knowing this,
+OTP providers modules for a number of behaviors. These split the implementation
+of the actor into 2 parts, the generic part and part specific to the actor. The
+generic part is implemented in OTP, and the part specific to the actor is left
+for the user to implement. This is done by implementing a set of callback
+functions. These are used by the generic part of the behavior, and is where the
+user implements their part of the actor.
+
 \section{Design}
 %% \begin{itemize}
 %% \item Talk about what an OTP implementation overall consists of (in general)
