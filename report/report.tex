@@ -61,6 +61,7 @@
 
 % TODO: Talk about local and global naming
 
+\subsection{The actor model}
 In the actor model, an application is structured around a collections of
 independent actors. Generally, each actor has the following abilities:
 \begin{itemize}
@@ -73,7 +74,8 @@ independent actors. Generally, each actor has the following abilities:
 \end{itemize}
 
 The actors exist as seperate entities, and should not be able to affect each
-other, unless it is through messaging each other.\\
+other, unless it is through messaging each other. Typically, a lot of actors are
+created, and each actor is tasked with handeling small tasks.\\
 
 \noindent
 The message passing itself can be realized in two different ways, synchronous
