@@ -2,7 +2,10 @@
 
 \usepackage{amsmath}
 \usepackage[margin=2.5cm]{geometry}
-\usepackage{listings}
+\usepackage{listings, listings-rust}
+\usepackage{wrapfig}
+
+\newcommand\figref[1]{Figure~\ref{#1}}
 
 \title{OTP in Rust}
 \author{Andreas Nicolaisen - \texttt{jtc313} \\ Marco Aslak Persson - \texttt{bfr555}}
@@ -251,7 +254,7 @@ specific terms:
   %% We have opted to statically type messages. This means that each actor can only
   %% receive messages of its data type, as well as ``System messages''. Message
   %% sending is accomplished using ``Mailboxes''. Using these actors can
-  %% send the 2 kinds of messages to each other. 
+  %% send the 2 kinds of messages to each other.
   There 3 kinds of mailboxes, unnamed, named and dynamic. Unnamed mailboxes are
   the main kind of mailbox, which allows the actors to send system messages and
   data messages to each other. Should the receiving actor crash, trying to send
@@ -275,7 +278,7 @@ specific terms:
   globally named, it will additonally have its mailbox globally registered by
   its supervisor on startup. This global registration is useful for commucating
   with often used actors, without having to acquire a reference to its mailbox
-  through other means. 
+  through other means.
 \item \textbf{Supervision}\\
   Our design of supervision breaks into two parts, how the user specifies it and
   how they interact with it. We have chosen to use a declarative approch when
@@ -465,16 +468,11 @@ supervisor over a private channel. Then the supervisor only has to listen on a
 single receiver on its own end, while many of these tasks can send their join
 notifications to it.
 
-\end{itemize}
+% TODO: Explain monitoring
 
-% Registry
-% AnyBox
-% RequestHandler (specifically, why is the deferred_sender mechanism a channel
-%                   and not a queue of some sort?)
-% ChildSpec
-% - How they changed
-% - starter mechanism
-% Supervisor: join-receiving tasks
+% TODO: Describe the request-handler
+
+\end{itemize}
 
 
 \begin{itemize}
@@ -483,7 +481,113 @@ notifications to it.
 \item Tokio, lightweight multiprocessing, like erlang.
 \end{itemize}
 
-\section{Examples}
+\section{Example}
+During our design and implementation process we've used an example application
+to both guide and evaluate our design and implementation.
+% ...
+
+% TODO: Example diagram
+
+\begin{wrapfigure}{r}{0.4\textwidth}
+\begin{lstlisting}[language=Rust,basicstyle=\footnotesize]
+supervise(
+  RestartStrategy::OneForAll,
+  vec![
+    child::<PoolServActor>
+      (RestartPolicy::Permanent, ())
+      .globally_named(POOL_SERV_NAME),
+    supervisor(
+      RestartPolicy::Permanent,
+      RestartStrategy::OneForOne,
+      vec![
+        child::<PoolWorkerActor>
+         (RestartPolicy::Permanent, ())
+        ; num_workers
+      ],
+    ).named(POOL_SUP_NAME),
+  ],
+)
+\end{lstlisting}
+  \caption{Supervision tree specification for the example}
+  \label{fig:ex-spec}
+\end{wrapfigure}
+
+The example is of a worker pool. The idea is that work can be submitted to a
+work-server, which then delegates the work to a worker from the pool of workers.
+The pool of workers are all transient children of the worker supervisor which
+operates using a one-for-one strategy, restarting any worker that crashes. The
+work-server actor and the pool-supervisor are in turn supervised under a common
+supervisor. This supervisor uses the one-for-all strategy, retstarting both the
+work-server and the pool-supervisor if either crashes. The specification can be
+seen in \figref{fig:ex-spec}.
+
+We have chosen this example because it is a simplified (but non-trivial) example
+of an realistic application. It exercises the following aspects of our
+implementation:
+\begin{itemize}
+\item A supervisor tree with nested supervisors
+\item Supervisor interaction. The pool-server actor queries the supervisors in order
+  to monitor and acquire the mailboxes of the worker actors.
+\item Communication between actors. The pool-server actor sends work to the
+  worker actors, and the workers reply back with the results, which the
+  pool-server actor then returns to whoever submitted the work.
+\end{itemize}
+
+The pool-server implementation (\texttt{PoolServActor}) is an instance of the
+\texttt{RequestHandler} behaviour. It's mesasge type is
+\texttt{PoolServMessage}.
+
+Upon being started (i.e. when its \texttt{init} method
+is called), the pool-server actor retrieves its sibling's (the pool-supervisor)
+mailbox by querying its own supervisor's children with \texttt{which\_children}
+and finding its sibling by its local name. Then it queries the pool-supervisor
+for all its children and monitors them all, then it spawns a task for each child
+that receive monitor messages, and sends a message to the pool-server's mailbox
+with the monitor result (whether the child has shutodwn or restarted) via the
+\texttt{{PoolServMessage::WorkerMonitor}} message. This allows monitor messages
+to be handled under the pool-server's \texttt{handle\_request} method.
+
+When a peice of work is requested to be executed, the pool-server is sent a
+\texttt{PoolServMessage::Start} containing the work item. It then forwards the
+work item to a worker actor together with the request-id. Which worker actor is
+decided based on a round-robin scheme. A task is then spawned that awaits the
+reply from the worker, and forwards it to the pool-server via the
+\texttt{PoolServMessage::Result} message. When the pool-server receives a result
+it then uses request-id associated with the result to reply with the result to
+the sender of the work request. If the pool-server receives a
+\texttt{PoolServMessage::WorkerMonitor} it either panics if a worker has
+shutdown (since it is going to be restarted anyway), and if the a worker has
+restarted it updates its mailbox, so it has an up-to-date mailbox for that
+worker.
+
+By delegating the receiving of the result from the worker, the pool-server can
+avoid blocking in the request handler while waiting for the result. Then allows
+it to handle other messages while the work is completed by a worker. It would
+also be possible --- instead of awaiting a reply from the worker --- to make the
+worker send the result as a message to the pool-server actor instead (acquiring
+the pool-servers mailbox through name resolution, since it's globally named).
+We've not opted to do that in this example, even though it's a very valid way of
+implementing it. The reason is that since workers are also instances of the
+\texttt{RequestHandler} trait, a oneshot channel is created for the request's
+reply anyway, so we opted to use that. As mentioned in the implementation
+chapter, we could also extend the \texttt{RequestHandler} to handle requests
+that don't expect a reply, and in that case the alternative design would make
+even more sense.
+
+The worker actors (\texttt{PoolWorkerActor}) are very simple instances of the
+\texttt{RequestHandler} behaviour. They have no state and only handles one
+message; the work item message, which consists of the work data and a
+request-id. Upon receiving a work-item the worker simply performs the work, and
+replies back with the result and the request-id.
+
+In this example work items are just a list of integers, and the result is the
+sum of those integers, but that is not very important for this example.
+
+% What purpose does our example serve?
+% - Supervisor trees, supervisor querying, interactor communication
+%
+
+
 \begin{itemize}
 \item High-level architecture (with nice diagrams \texttt{:)})
 \item Motivation, i.e. what does this example demonstrate
