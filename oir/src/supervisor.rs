@@ -86,14 +86,14 @@ pub fn child<A: Actor>(r: RestartPolicy, b: <A as Actor>::Arg) -> ChildSpec {
 }
 
 impl ChildSpec {
-    pub fn named(mut self, name: String) -> Self {
-        self.name = Some(name);
+    pub fn named<S: ToString>(mut self, name: S) -> Self {
+        self.name = Some(name.to_string());
         self.registered_globally = false;
         self
     }
 
-    pub fn globally_named(mut self, name: String) -> Self {
-        self.name = Some(name);
+    pub fn globally_named<S: ToString>(mut self, name: S) -> Self {
+        self.name = Some(name.to_string());
         self.registered_globally = true;
         self
     }

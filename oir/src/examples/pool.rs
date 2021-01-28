@@ -193,9 +193,9 @@ fn pool(
                 RestartPolicy::Permanent,
                 RestartStrategy::OneForOne,
                 vec![child::<PoolWorkerActor>(RestartPolicy::Permanent, ()); num_workers],
-            ).named(POOL_SUP_NAME.to_string()),
+            ).named(POOL_SUP_NAME),
             child::<PoolServActor>(RestartPolicy::Permanent, ())
-                .globally_named(POOL_SERV_NAME.to_owned()),
+                .globally_named(POOL_SERV_NAME),
         ],
     )
 }
