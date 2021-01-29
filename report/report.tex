@@ -3,6 +3,7 @@
 \usepackage{amsmath}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{listings, listings-rust}
+\usepackage{graphicx}
 \usepackage{wrapfig}
 
 \newcommand\figref[1]{Figure~\ref{#1}}
@@ -481,12 +482,19 @@ notifications to it.
 \item Tokio, lightweight multiprocessing, like erlang.
 \end{itemize}
 
+\newpage
 \section{Example}
 During our design and implementation process we've used an example application
-to both guide and evaluate our design and implementation.
+to both guide and evaluate our design and implementation. A diagram of this can
+be seem in \figref{fig:example_diagram}.
 % ...
 
-% TODO: Example diagram
+\begin{figure}[h!]
+  \centering
+  \includegraphics[width=0.5\textwidth]{./resources/PoolDiagram.pdf}
+  \caption{Diagram for example}
+  \label{fig:example_diagram}
+\end{figure}
 
 \begin{wrapfigure}{r}{0.4\textwidth}
 \begin{lstlisting}[language=Rust,basicstyle=\footnotesize]
