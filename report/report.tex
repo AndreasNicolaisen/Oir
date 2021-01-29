@@ -301,14 +301,15 @@ specific terms:
     specications. A worker will need some restart policy, and also takes an
     starting argument. Both supervisors and workers can be named, either locally
     or globally.
-  \item \textbf{Supervisor - Interaction}\\ % TODO: Add monitor
+  \item \textbf{Supervisor - Interaction}\\
     When interacting with a supervisor, it is important to note that supervisors
     themselves are actors, just like workers. This means that they can receive
     messages like any other actor. They can receive system messages asking them to
     shutdown, as well as requests. These requests allow other actors to ask for a
-    list of the supervisors children, and to ask the supervisor to start another
-    child, given a specification. All children are given a mailbox to their
-    supervisor, so that they can make these requests of them.
+    list of the supervisors children, to ask the supervisor to start another
+    child, given a specification, and allows for monitoring children i.e. being
+    notified whenever a child is shutdown or restarted. All children are given a
+    mailbox to their supervisor, so that they can make these requests of them.
   \end{itemize}
 \item \textbf{Behaviours}\\
   The concept of behavious from OTP are implemented as traits, that should be
@@ -469,9 +470,52 @@ supervisor over a private channel. Then the supervisor only has to listen on a
 single receiver on its own end, while many of these tasks can send their join
 notifications to it.
 
-% TODO: Explain monitoring
+The supervisor also keeps track of a list of ``monitors'' for each child. When a
+child is shutdown or restarted, all (if any) of said child's monitors are
+notified about this. When notifying about a restart, the child's new mailbox is
+also sent along. A monitor is simply the \texttt{Sender} end of an \texttt{mpsc}
+channel, over which \texttt{MonitorMessage}s are sent. Monitors are registered
+by sending the supervisor a monitor message using the \texttt{monitor} function,
+which consists of the local-id of the child to be monitored and the
+\texttt{Sender} to send the notification with.
 
-% TODO: Describe the request-handler
+\item {\bf The request-handler behaviour} \\
+  This behaviour is comparable to OTP's \texttt{gen\_server}, it allows for
+  defining actors that handle requests, allowing for an immediate- or delayed
+  response. The user-defined part of the behaviour is facilitated by the
+  \texttt{RequestHandler} trait, which consists of two type-parameters, the
+  request and response types, and two methods \texttt{init} and
+  \texttt{on\_request}. The \texttt{init} method is called as the first thing
+  when the request-handler's task has been spawned. Its mailbox is passed along
+  in order to allow the request-handler to know its own mailbox, and possibly
+  send it to other actors. The \texttt{on\_request} methods takes the
+  request-message, a unique request-id and a deferred reply channel. It returns
+  either a \texttt{Response::Reply} with the reply value or
+  \texttt{Response::NoReply}. When if \texttt{on\_request} returns with a reply,
+  said reply is directly sent back to the requester. If no response is returned
+  by the request-handler then the reply is deferred by storing request in a map
+  using the request-id. In order to reply to a deferred request, the request-id
+  together with the reply-value should be sent over the deferred-reply channel.
+  By using a channel for deferred replies instead of a call-back, queue or just
+  exposing the deferred-reply map, we enable the possibility of passing the
+  sender for that channel on to another actor, allowing request handlers to
+  delegate the reply to someone else.
+
+  The mechanism used for allowing requesters to get a reply back is by bundling
+  their actual request-message together with the sender-end of a
+  oneshot-channel. A oneshot-channel is a channel like \texttt{mpsc}, but which
+  can only transfer a single value. Then the request-handler can send its
+  response over the sender passed along with the request. The requester then
+  receives the reply by awaiting a reply on the receiving end. This is done because
+  it requires as little coupling as possible, the requester can pass on the
+  receiving end onto any other actor that might wish to receive the value, and
+  the request-handler can delegate the reply to any other actor as explained
+  earlier. There no need to communicate a mailbox for the request-handler to
+  reply back to, which in itself would introduce challenges, since what message
+  should the request-handler even reply with? That would require further
+  specification. While it is possible, and might even be preferable in some
+  cases, this solution makes the fewest assumptions and is therefore the most
+  flexible.
 
 \end{itemize}
 
