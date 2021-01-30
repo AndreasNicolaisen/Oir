@@ -153,12 +153,44 @@ functions. These are used by the generic part of the behavior, and is where the
 user implements their part of the actor.
 
 \subsection{How can this be implemented in Rust}
-%% Processes are not isolated, but ownership system...
 \begin{itemize}
-\item \textbf{Isolated actors}
-\item \textbf{Message passing}
-\item \textbf{Monitoring and killing other processes}
-\item \textbf{Behaviors}
+\item \textbf{Immutability and actor isolation}\\
+  In Erlang all data are imutable, and processes are isolated from each other.
+  One of the main benefits and isolation, is to avoid shared mutable state, and
+  the problems the arise from. In Rust, different threads are not isolated from
+  each other the same way that processes in Erlang are, and neither are all data
+  immutable. However, Rusts type system prevents the danger of mutable shared
+  state, both in single and multi thread contexts, avoiding the common downsides
+  of shared and mutable state. This means that the can affect other threads by
+  ways other than message passing, however, the common downsides of this are
+  avoided.
+\item \textbf{Message passing}\\
+  Unlike in Erlang, there are no intrinsics for sending and receiving messages
+  in Rust. However, the standard library provides a multiple producer, single
+  comsumer channel which fulfills this purpose. It will require some more code
+  to create and handle these channels, but hopefully this can all be done in the
+  library itself, so that the experience of messaging other actors are largely
+  the same as in Erlang.
+\item \textbf{Monitoring and killing other processes}\\
+  We have chosen to realize our actors as tokio tasks (see design/implementation
+  sections), which does not provide the same functionality as Erlang does for
+  its processes.\\
+  This means that we cannot simply monitor other actors the way we can in
+  Erlang. We \textit{can} know when a task finishes, but only by awaiting its
+  joinhandle, which can only be done by one thread. This is becaused it cannot
+  be cloned. This means that we need to implement some system for notifying
+  other actors, of when an actor terminates, inorder to get the same monitoring
+  functionality.\\
+  We cannot kill other tasks the same way we can in Erlang, and this is one of
+  the points where our library is going to differ from Erlang/OTP. This could
+  theoretically be done if we were using OS threads, but for reasons discussed
+  in the design section, we're not. Instead, we allow for asking another actor
+  to terminate itself, in a regular message.
+\item \textbf{Behaviors}\\
+  In Erlang/OTP, the way you use behaviors is to implement a set of callback
+  functions, which are then called by the behavior module. The way to do this in
+  Rust is to implement a trait, with a series of methods, for a type. These
+  accomplish the same thing, using different language features.
 \end{itemize}
 
 \section{Design}
