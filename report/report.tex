@@ -396,7 +396,10 @@ mechanism for sending values between threads via a FIFO queue. Specifically, we
 use the multi-producer, single-consumer (\texttt{mpsc}) kind. Such a channel
 consists of a unique \texttt{Receiver}-end and any number of \texttt{Sender}s.
 The actor owns the \texttt{Receiver} end and uses it to accept incoming
-messages, while the \texttt{Sender}s are abstracted over as mailboxes.
+messages, while the \texttt{Sender}s are abstracted over as mailboxes. Normally
+it is the responsibility of the library part of the behavior, to handle the
+actual reception of messages. Therefore, the receiver is normally exposed to the
+behavior implementer.
 % - Boundedness
 Tokio
 provides two kinds of \texttt{mpsc} channel, bounded and unbounded. Sending
@@ -419,15 +422,15 @@ choice of channel is hidden behind our mailbox abstraction.
 
 As mentioned in the design section we have a couple of different types of
 mailboxes. First of all, we have a mailbox trait (called \texttt{Mailbox}) which
-allows for code be generically parametric over which specific type of maiblox it
+allows for code be generically parametric over which specific type of mailbox it
 deals with. The mailbox trait supports sending messages of the associated
 message type and querying whether the mailbox has been closed. The most commonly
 used mailbox type is the \texttt{UnnamedMailbox}, which simply behaves as an
 abstraction over the underlying channel. The \texttt{NamedMailbox} extends the
 unnamed variety with a naming indirection. While an unnamed mailbox can only be
 acquired by cloning or being sent one, a named one can be acquired by resolving
-a name. A global registry is maintained mapping any registered mailboxes to
-their name. Operations on a named mailbox only succeed if the name can be
+a name. A global registry is maintained, mapping names to mailboxes. Operations
+on a named mailbox only succeed if the name can be
 resolved. If the underlying channel of the named mailbox has been closed, upon
 trying to send a message via the mailbox, an attampt is made to re-resolve the name to a
 mailbox of the same type. This re-resolution is done to allow for seamless
@@ -443,10 +446,13 @@ In order to allow for heterogeneous storage of mailboxes, we've implemented the
 operations not involving the underlying mailbox's message type, and a method for
 attempting to convert it back into a typed mailbox (which might fail if the
 underlying message type doesn't match the attempted type). This means that it's
-impossible to send messages of the wrong type. It's implemented by
-storing type-information about the underlying mailbox at runtime, and by storing
-the underlying mailbox in an (owned) separate allocation, such that the layout of
-\texttt{DynamicMailbox}es is homogenous. This introduces a runtime overhead on
+impossible to send messages of the wrong type.
+It's implemented by
+storing type-information about the underlying mailbox at runtime in our
+\texttt{AnyBox} type, which stores the underlying mailbox in an (owned) separate
+allocation, such that the layout of the \texttt{AnyBox} is homogenous, and
+thereby making \texttt{DynamicMailbox}es homogenous too.
+This introduces a runtime overhead on
 all operations on the dynamic mailbox, but since the most common operation on
 mailboxes is sending typed messages, which only can be done by converting the
 dynamic mailbox into an unnamed one, this is not a big performance concern,
@@ -536,9 +542,9 @@ which consists of the local-id of the child to be monitored and the
   send it to other actors. The \texttt{on\_request} methods takes the
   request-message, a unique request-id and a deferred reply channel. It returns
   either a \texttt{Response::Reply} with the reply value or
-  \texttt{Response::NoReply}. When if \texttt{on\_request} returns with a reply,
+  \texttt{Response::NoReply}. If \texttt{on\_request} returns with a reply,
   said reply is directly sent back to the requester. If no response is returned
-  by the request-handler then the reply is deferred by storing request in a map
+  by the request-handler then the reply is deferred by storing requests in a map
   using the request-id. In order to reply to a deferred request, the request-id
   together with the reply-value should be sent over the deferred-reply channel.
   By using a channel for deferred replies instead of a call-back, queue or just
@@ -555,7 +561,7 @@ which consists of the local-id of the child to be monitored and the
   it requires as little coupling as possible, the requester can pass on the
   receiving end onto any other actor that might wish to receive the value, and
   the request-handler can delegate the reply to any other actor as explained
-  earlier. There no need to communicate a mailbox for the request-handler to
+  earlier. There is no need to communicate a mailbox for the request-handler to
   reply back to, which in itself would introduce challenges, since what message
   should the request-handler even reply with? That would require further
   specification. While it is possible, and might even be preferable in some
