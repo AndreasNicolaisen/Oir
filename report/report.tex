@@ -210,12 +210,12 @@ user implements their part of the actor.
 %%   some of them)
 %% \end{itemize}
 \subsection{Design goals}
-In the design of our library, we have the following goals:
+In the design of our library, we have set the following goals:
 \begin{itemize}
-\item Implement an OTP-like (or rather, a subset of it) system in Rust in an
-  idiomatic fashion.
+\item Implement an OTP-like (or rather, a subset of it) system in Rust in a way
+  that is idiomatic to Rust.
 \item Strongly type the messages that the actors will pass to each other.
-\item Allow the user to write idiomatic actor model code in a way that is also
+\item Allow the user to write idiomatic actor model code, in a way that is also
   idiomatic to Rust.
 \item Enable to user to easily organize their actors in supervisor trees, both
   in a declarative as well as dynamic fashion.
@@ -223,23 +223,24 @@ In the design of our library, we have the following goals:
   worry about how the actors interacts with the supervision tree.
 \end{itemize}
 
+\noindent
 Overall, the aim is to create a library that provides better type-safety than
 what is experienced in Erlang, without making it harder to implement an
 application. This should be accomblished by using Rust's own guarantees, so that
 a programmer experienced with Rust can use it, without a large barrier to entry.
 
 \subsection{Design details}
-We've designed our library to be implemented with an asynchronous execution model.
-This is because any pratical implementation of an actor model requires actors to
-be able to send messages asynchronously. It is not necessarily a requirement for
-actors to run concurrently. By making our library asynchronous we enable the
-implementation to take advantage of cooperative multi-threading via
-``green threads'', which can both work in single-threaded and multi-threaded
-contexts. Green threads are a more light-weight alternative to using
-operating system threads, which is important because idiomatic use of the actor
-model often involves creating actors for even small tasks. If creating an actor
-required starting an operating system thread, then the overhead would be quite
-signficant compared to green threads.\\
+We've designed our library to be implemented with an asynchronous execution
+model. This allows us to easily acheive concurrency between the actors, in both
+single and multi-threaded contexts. It is not necessarily a requirement for
+actors to run in parallel. By making our library asynchronous we enable the
+implementation to take advantage of cooperative multi-threading via ``green
+threads'', which can both work in single-threaded and multi-threaded contexts.
+Green threads are a more light-weight alternative to using operating system
+threads, which is important because idiomatic use of the actor model often
+involves creating actors for even small tasks. If creating an actor required
+starting an operating system thread, then the overhead would be quite signficant
+compared to green threads.\\
 
 % What is actor?
 \noindent
@@ -249,23 +250,23 @@ which receive and acts upon messages sent to them through their mailboxes.\\
 \noindent
 Mailboxes are objects that enables the sending of messages to an actor, and are
 comparable to PIDs in Erlang. We've opted to not hide mailboxes behind an
-indirection like a PID and instead make actors use and store the data-structure
-required for the actual sending of message directly. This is done to avoid
-having to do extra book-keeping (like maintaining a --- possibly global --- map
-of PID to the data-structure required for sending message). This is at the cost
-of having to possibly store more data per mailbox compared to PID and having to
-clone the mailbox whenever it needs to be sent to another actor (which is
-required due to Rust's ownership system).\\
+indirection, like a PID, and instead make actors use and store the
+data-structure required for the actual sending of message directly. This is done
+to avoid having to do extra book-keeping (like maintaining a --- possibly global
+--- map of PID to the data-structure required for sending message). This is at
+the cost of having to possibly store more data per mailbox compared to PID, as
+well as having to clone the mailbox whenever it needs to be sent to another
+actor (which is required due to Rust's ownership system).\\
 
 \noindent
 All actors can receive two kinds of messages. The first being system messages
-which pertain to system-level concerns, currently this only involves requesting
+which pertain to system-level concerns. Currently this only involves requesting
 an actor to shut down. In addition to system messages, actors can also
 receive messages of their own specific message type. The message type of an
 actor is specified as part of the actor's implementation. The only requirement
-for an actor's message type is that is it transferable between threads, i.e. it
+for an actor's message type is that it's transferable between threads, i.e. it
 implements/satisfies the \texttt{Send} trait in Rust. This requirement allows
-actors to run on seperate threads. Though by only having this requirement we do
+actors to run on seperate threads. Though by only having this requirement, we do
 not have the required invariants to allow for inter-process or remote
 communication between actors, since that would require that messages were also
 serializable. The reason we choose to have the system messages as a seperate
@@ -275,7 +276,7 @@ hindsight, this is properly an unnecesarry complication, since all messages
 could be wrapped in an some sort of \texttt{Either<SystemMessage, MessageType>},
 or \texttt{SystemMessage} could have another variant containing the actors
 message type. This would require more conversion in the background, but from the
-users perspective, it should properly be easier to use, and we wouldn't have to
+users perspective, it whould properly be easier to use, and we wouldn't have to
 store/use two channels for each mailbox. On the other hand, having the two kinds
 of messages in seperate channels, makes it easier to prioritise system message,
 without having to go through all pending messages.\\
@@ -304,32 +305,33 @@ specific terms:
   mailboxes are an indirection over unnamed mailboxes, used for sending messages
   to an actor that is registered globally with a name. These 2 first kind of
   mailboxes are typed over the message type. The dynamic mailbox is mainly used
-  in situations where multiple different actor types can occur. % TODO: Add example (which children)
-  It can only be used for sending system messages, until the user tries to casts
-  it to a concrete type. This allows the user to handle them without caring
-  about the underlying message type.
+  in situations where multiple different actor types can occur, such as when
+  getting a list of a supervisors children. It can only be used for sending
+  system messages, until the user tries to casts it to a concrete type. This
+  allows the user to handle them without caring about the underlying message
+  type.
 \item \textbf{Actor naming}\\
-  There are two forms of naming of actors, global and local, both before the
-  child was started. The names are used for two different purposes, for
+  There are two forms of naming of actors, global and local, both given before
+  the actor is started. The names are used for two different purposes, for
   differenting between actors locally, and for aquiring a reference to an actor.
   An actor can ask a supervirsor (usually its own) for a list of its children.
-  The supervisor then replies with a list of its' children, consisting of the
-  child's name, and the child's mailbox. These names will be the names that
-  where given before the child was started (either global or local). If a child
-  is not given a name, it will be assigned one by its supervisor. If a child is
-  globally named, it will additonally have its mailbox globally registered by
-  its supervisor on startup. This global registration is useful for commucating
-  with often used actors, without having to acquire a reference to its mailbox
-  through other means.
+  The supervisor then replies with a list of its children, consisting of the
+  children's names, and the children's mailboxes. These names will be the names
+  that where given before the child was started (either global or local). If a
+  child is not given a name, it will be assigned one by its supervisor. If a
+  child is  globally named, it will additonally have its mailbox globally
+  registered by  its supervisor on startup. This global registration is useful
+  for commucating with often used actors, without having to acquire a reference
+  to its mailbox through other means. This is how the named mailboxes work.
 \item \textbf{Supervision}\\
   Our design of supervision breaks into two parts, how the user specifies it and
   how they interact with it. We have chosen to use a declarative approch when
-  specifying how supervision should be created, in order to aliviate the user
-  from having to think about how supervision trees are built. Instead, they only
-  have to think about how they want to structure their supervion
+  specifying how a supervision tree should be created, in order to aliviate the
+  user from having to think about how supervision trees are built. Instead, they
+  only have to think about how they want to structure their supervion
   tree/application. We allow the user to interact with the supervisors through
   messages, so that they can establish contact between actors dynamically. This
-  is useful for dealing with dynamic instantiaion of actors, and for discovering
+  is useful for dealing with dynamic instantiation of actors, and for discovering
   other actors in the supervision tree, without having to resort to global
   naming.
   \begin{itemize}
@@ -348,19 +350,21 @@ specific terms:
     messages like any other actor. They can receive system messages asking them to
     shutdown, as well as requests. These requests allow other actors to ask for a
     list of the supervisors children, to ask the supervisor to start another
-    child, given a specification, and allows for monitoring children i.e. being
-    notified whenever a child is shutdown or restarted. All children are given a
-    mailbox to their supervisor, so that they can make these requests of them.
+    child with given a specification, and allows for monitoring children i.e.
+    being notified whenever a child is shutdown or restarted. All children are
+    given a mailbox to their supervisor, so that they can make these requests of
+    them.
   \end{itemize}
 \item \textbf{Behaviours}\\
   The concept of behavious from OTP are implemented as traits, that should be
   implemented in order to fulfill the behaviour. This will consist of a number
   of methods that should be implemented, and they (the traits) will often be
-  over a type. They will often come with a helper method that provides the
-  common boiler plate functionality (eg. the handeling of system messages). When
-  a message passed the the actor is not part of the boiler plate, the behaviour
-  will pass this message onto implementation of the trait.
-\item \textbf{Asynchronous exceptions}\\ % TODO: Make name better
+  over a type. They will come with a helper method that provides the common
+  boiler plate functionality (eg. the handeling of system messages). This
+  method serves the same purpose as the behavoir module in Erlang. When a
+  message passed to the actor is not part of the boiler plate, the behaviour
+  will pass this message onto the implementation of the trait.
+\item \textbf{Asynchronous exceptions}
   Unlike in Erlang, actors can't kill each other directly. Instead each
   actors can request that an other actors shuts itself down. The handeling of
   this message will then take place in library code, to avoid usercode from
