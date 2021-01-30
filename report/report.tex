@@ -69,11 +69,11 @@
 In the actor model, an application is structured around a collections of
 independent actors. Generally, each actor has the following abilities:
 \begin{itemize}
-\item Each actor has the abiltity to send and receive messages to
-  each other.
-\item The actors can decide to take any actor they desire based on the
-  messages they receive. This includes modifying some state that they hold on to,
-  which can then be used when responding to later messages.
+\item Each actor has the abiltity to send messages to other actors, and
+  themselves receive messages.
+\item The actors can decide to take any action they desire based, on the messages
+  they receive. This includes modifying some state that they hold on to, which
+  can then be used when responding to later messages.
 \item Each actor can spawn new actors.
 \end{itemize}
 
@@ -83,15 +83,15 @@ created, and each actor is tasked with handeling small tasks.\\
 
 \noindent
 The message passing itself can be realized in two different ways, synchronous
-and asynchronous. By synchronous, it is understood that when an actors sends an
-other actor a message, it will only continue its execution when the other actor
-has received the message. By asynchronous, it is understood that the message is
-sent much like a letter, in that once we have sent a message we don't know
-when/if the other actor will receive it. In different realizations of the actor
-model, there will be different guarantees as to whether messages will always be
-received, or if they can be lost, as well as what order the messages can be
-in. How the message passing works will also differ. All actors might have some
-address that can be used to send them messages, or be given names that can
+and asynchronous. By synchronous, it is understood that when an actors sends
+another actor a message, it will only continue its execution when the other
+actor has received the message. By asynchronous, it is understood that the
+message is sent much like a letter, in that once we have sent a message we don't
+know when/if the other actor will receive it. In different realizations of the
+actor model, there will be different guarantees as to whether messages will
+always be received, or if they can be lost, as well as what order the messages
+can be in. How the message passing works will also differ. All actors might have
+some address that can be used to send them messages, or be given names that can
 change what they refer to, during the execution of the program.
 
 \subsection{Erlang processes}
@@ -99,29 +99,29 @@ As mentioned, in an idiomatic actor model system, a lot of actors are often
 created. This means that we have the possibility to run the actors concurrently,
 but we have to be careful of how we do it. If we were to fx. run each actor on a
 seperate OS thread, we would encounter a large overhead each time a new actor
-are created. Erlang solves this by providing lightweight processes, which only
-take up a small amount of memory when created.\\
+are created (as well as the cost of context switching). Erlang solves this by
+providing lightweight processes, which are quick to create and only take up a
+small amount of memory when created.\\
 
-\noindent
-This allows us to use a new process for each actor that we want in our system,
-without encountering a large overhead. Each process is equipped with a
+\noindent This allows us to use a new process for each actor that we want in our
+system, without encountering a large overhead. Each process is equipped with a
 \texttt{PID} (Process IDentifer). If an process (or actor) knows another's PID,
-they can use it send them messages, monitor it, as well as ``kill'' it. Message
-sending is asynchronous, and anything can be sent. The other process can then
-specify what it want to receive at a given time, and how to act based upon the
-message. By monitoring another process, the monitoring process will be notified
-if the monitored processs dies\footnote{Processes can also link to each other,
-but that is beyond the scope if this project}. While this is not part of the
-actor model, it is often quite useful. By sending a special signal, a process
-can ``kill'' another process, which shutdowns the process, no matter what is was
-currently doing. This is useful when organizing actors in
-\textit{supervision trees}, which will be touched on in the next section.
+they can use it to send them messages, monitor it, as well as ``kill'' it.
+Message sending is asynchronous, and anything can be sent. The other process can
+then specify what it want to receive at a given time, and how to act based upon
+the messages it receives. By monitoring another process, the monitoring process
+will be notified if the monitored processs dies\footnote{Processes can also link
+to each other, but that is beyond the scope if this project}. While this is not
+part of the actor model, it is often quite useful. By sending a special signal,
+a process can ``kill'' another process, which shutdowns the process, no matter
+what is was currently doing. This is useful when organizing actors in
+\textit{supervision trees}, which will be discussed in the next section.
 
 \subsection{OTP}
 Developing application with Erlang is most often coupled with using OTP (Open
 Telecom Platform). OTP is a platform consisting of a compiler, libraries,
 middelwares, a database and some tools. What we will be most concerned with is
-supervision trees, and behaviors.
+supervision trees and behaviors.
 
 \subsubsection{Supervision trees}
 Supervision trees are a way to organize actors into supervisors and workers, in
@@ -138,6 +138,7 @@ it when it does. An example of a supervision tree can be seen in
   \label{fig:supervision_tree}
 \end{figure}
 
+\noindent
 A supervisor will have a number of children, which can be both workers and other
 supervisors. Should any of a supervisor's children shutdown unexpectedly, the
 supervisor have the responsibility of starting it back up again, if it is
@@ -160,14 +161,14 @@ user implements their part of the actor.
 \begin{itemize}
 \item \textbf{Immutability and actor isolation}\\
   In Erlang all data are imutable, and processes are isolated from each other.
-  One of the main benefits and isolation, is to avoid shared mutable state, and
+  One of the main benefits of isolation, is to avoid shared mutable state, and
   the problems the arise from. In Rust, different threads are not isolated from
   each other the same way that processes in Erlang are, and neither are all data
   immutable. However, Rusts type system prevents the danger of mutable shared
   state, both in single and multi thread contexts, avoiding the common downsides
-  of shared and mutable state. This means that the can affect other threads by
-  ways other than message passing, however, the common downsides of this are
-  avoided.
+  of shared and mutable state. This means that the actors can affect other
+  threads by ways other than message passing, however, the common downsides of
+  this are avoided.
 \item \textbf{Message passing}\\
   Unlike in Erlang, there are no intrinsics for sending and receiving messages
   in Rust. However, the standard library provides a multiple producer, single
@@ -178,20 +179,24 @@ user implements their part of the actor.
 \item \textbf{Monitoring and killing other processes}\\
   We have chosen to realize our actors as tokio tasks (see design/implementation
   sections), which does not provide the same functionality as Erlang does for
-  its processes.\\
+  its processes.
+
   This means that we cannot simply monitor other actors the way we can in
   Erlang. We \textit{can} know when a task finishes, but only by awaiting its
   joinhandle, which can only be done by one thread. This is becaused it cannot
   be cloned. This means that we need to implement some system for notifying
   other actors, of when an actor terminates, inorder to get the same monitoring
-  functionality.\\
+  functionality.
+
   We cannot kill other tasks the same way we can in Erlang, and this is one of
   the points where our library is going to differ from Erlang/OTP. This could
   theoretically be done if we were using OS threads, but for reasons discussed
   in the design section, we're not. Instead, we allow for asking another actor
-  to terminate itself, in a regular message.
+  to terminate itself, by sending a message. These kinds of messages are
+  prioritised over other kinds of messages, so it achevives close to the same
+  semantics are Erlang, but not exactly.
 \item \textbf{Behaviors}\\
-  In Erlang/OTP, the way you use behaviors is to implement a set of callback
+  In Erlang/OTP, the way you use behaviors, is by implementing a set of callback
   functions, which are then called by the behavior module. The way to do this in
   Rust is to implement a trait, with a series of methods, for a type. These
   accomplish the same thing, using different language features.
