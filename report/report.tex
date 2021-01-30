@@ -127,12 +127,16 @@ supervision trees, and behaviors.
 Supervision trees are a way to organize actors into supervisors and workers, in
 a way that supports reliability. This is under the philosophy that parts of any
 implementation will, from time to time, crash, and it should be setup to handle
-it when it does. An example of a supervision tree can be seen in figure %\autoref{fig:}
+it when it does. An example of a supervision tree can be seen in
+\figref{fig:supervision_tree}.
 
-%% \begin{figure}[h]
-%%   \includegraphicx{}
-%%   \caption{An example of a supervision tree}
-%% \end{figure}
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.5\textwidth]{./resources/SupervisionTree.png}
+  \caption{An example of a supervision tree, the square nodes are supervisors,
+    and the round nodes are workers} % TODO: source:  https://erlang.org/doc/design_principles/des_princ.html#supervision-trees 
+  \label{fig:supervision_tree}
+\end{figure}
 
 A supervisor will have a number of children, which can be both workers and other
 supervisors. Should any of a supervisor's children shutdown unexpectedly, the
