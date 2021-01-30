@@ -388,6 +388,10 @@ We have chosen to base our implementation on the Tokio library. Tokio provides a
 asynchronous execution runtime, with support for \texttt{Task}s, which are
 light-weight non-blocking execution units. This is especially useful because we
 want the overhead of spawning actors to be low.
+
+Actors are concretely realized in our library as a Tokio \texttt{Task}, with the
+receiving end of its mailbox, which acts upon messages send to it.
+
 \begin{itemize}
 \item{\bf Mailboxes} \\
 Mailboxes are implemented as an abstraction on top of channels. Channels as a
