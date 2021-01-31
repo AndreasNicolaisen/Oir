@@ -20,8 +20,8 @@ struct PoolServActor {
     pool_sup: Option<SupervisorMailbox>,
 }
 
-type WorkItem = (RequestId, Vec<i32>);
-type WorkerResp = (RequestId, i32);
+type WorkItem = Vec<i32>;
+type WorkerResp = i32;
 
 enum PoolServMessage {
     Start(Vec<i32>),
@@ -119,7 +119,7 @@ impl RequestHandler<PoolServMessage, WorkResult> for PoolServActor {
         match request {
             PoolServMessage::Start(work_item) => {
                 let (ss, rs) = oneshot::channel();
-                if self.workers[self.next].1.send((ss, (request_id, work_item))).await.is_err() {
+                if self.workers[self.next].1.send((ss, work_item)).await.is_err() {
                     panic!("Doesn't send worker work item");
                 }
                 self.next = (self.next + 1) % self.workers.len();
@@ -127,9 +127,9 @@ impl RequestHandler<PoolServMessage, WorkResult> for PoolServActor {
                 let mut mb = self.mailbox.as_ref().unwrap().clone();
 
                 tokio::spawn(async move {
-                    let (ri, r) = rs.await.unwrap();
+                    let r = rs.await.unwrap();
                     let (ss, rs) = oneshot::channel();
-                    mb.send((ss, PoolServMessage::Result(ri, r))).await;
+                    mb.send((ss, PoolServMessage::Result(request_id, r))).await;
                 });
 
                 Ok(Response::NoReply)
@@ -156,15 +156,15 @@ impl RequestHandler<PoolServMessage, WorkResult> for PoolServActor {
 struct PoolWorkerActor;
 
 #[async_trait]
-impl RequestHandler<WorkItem, (RequestId, i32)> for PoolWorkerActor {
+impl RequestHandler<WorkItem, i32> for PoolWorkerActor {
     async fn on_request(
         &mut self,
-        deferred_sender: &mut mpsc::Sender<(RequestId, WorkerResp)>,
-        request_id: RequestId,
-        (ri, items): WorkItem,
+        _deferred_sender: &mut mpsc::Sender<(RequestId, WorkerResp)>,
+        _request_id: RequestId,
+        items: WorkItem,
     ) -> Result<Response<WorkerResp>, ErrorBox> {
         let r = items.into_iter().sum();
-        Ok(Response::Reply((ri, r)))
+        Ok(Response::Reply(r))
     }
 }
 
