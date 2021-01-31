@@ -623,10 +623,10 @@ which consists of the local-id of the child to be monitored and the
 
 \newpage
 \section{Example}
-During our design and implementation process we've used an example application
+During our design and implementation process, we've used an example application
 to both guide and evaluate our design and implementation. The example is
 inspired by an example in Learn you some Erlang\cite{LYSE}, but it is not
-exactly the same. A diagram of this can be seem in \figref{fig:example_diagram}.
+exactly the same. A diagram of this can be seen in \figref{fig:example_diagram}.
 % ...
 
 \begin{figure}[h!]
@@ -672,10 +672,10 @@ seen in \figref{fig:ex-spec}.\\
 
 \noindent
 We have chosen this example because it is a simplified (but non-trivial) example
-of an realistic application. It exercises the following aspects of our
+of a realistic application. It exercises the following aspects of our
 implementation:
 \begin{itemize}
-\item A supervisor tree with nested supervisors
+\item A supervisor tree with nested supervisors.
 \item Supervisor interaction. The pool-server actor queries the supervisors in order
   to monitor and acquire the mailboxes of the worker actors.
 \item Communication between actors. The pool-server actor sends work to the
@@ -690,13 +690,13 @@ The pool-server implementation (\texttt{PoolServActor}) is an instance of the
 
 \noindent
 Upon being started (i.e. when its \texttt{init} method
-is called), the pool-server actor first asks its superviser for a list of its
+is called), the pool-server actor first asks its supervisor for a list of its
 children (Using \texttt{which\_children}). It then finds the child with the
 local name of its sibling (the pool-supervisor), and thereby gets its mailbox.
 Then it queries the pool-supervisor for all its children and monitors them all.
-Then it spawns a task for each child that receive monitor messages, and sends a
+Then it spawns a task for each child that receives monitor messages and sends a
 message to the pool-server's mailbox with the monitor result (whether the child
-has shutdown or restarted) via the \texttt{{PoolServMessage::WorkerMonitor}}
+has shut down or restarted) via the \texttt{{PoolServMessage::WorkerMonitor}}
 message. This allows monitor messages to be handled under the pool-server's
 \texttt{handle\_request} method.\\
 
@@ -709,12 +709,12 @@ worker, and forwards it to the pool-server via the
 \texttt{PoolServMessage::Result} message. When the pool-server receives a result
 it then uses the request-id associated with the result to reply with the result
 to the sender of the work request. If a worker crashes, it will be restarted by
-the pool-supervisor. The pool-server will then be notified of the restart, and
+the pool-supervisor. The pool-server will then be notified of the restart and
 will update the mailbox of the corresponding worker, to the one of the new
-worker. If the pool-server is notified that a worker has been shutdown, this
+worker. If the pool-server is notified that a worker has been shut down, this
 indicates that the pool-supervisor is being shutdown or restarted. Therefore the
 worker pool is unavailable, and the pool-server can't continue operating and
-therefore panics. Since the pool-server is ``Tied`` to the pool-supvisor (due to
+therefore panics. Since the pool-server is ``Tied`` to the pool-supervisor (due to
 the one-for-all restart strategy), it would have been restarted anyway.\\
 
 \noindent
@@ -729,18 +729,18 @@ implementing it. The reason is that since workers are also instances of the
 \texttt{RequestHandler} trait, a oneshot channel is created for the request's
 reply anyway, so we opted to use that. As mentioned in the implementation
 chapter, we could also extend the \texttt{RequestHandler} to handle requests
-that don't expect a reply, and in that case the alternative design would make
+that don't expect a reply, and in that case, the alternative design would make
 even more sense.\\
 
 \noindent
 The worker actors (\texttt{PoolWorkerActor}) are very simple instances of the
 \texttt{RequestHandler} behaviour. They have no state and only handles one
 message; the work item message, which consists of the work data and a
-request-id. Upon receiving a work-item the worker simply performs the work, and
-replies immediately back with the result.\\
+request-id. Upon receiving a work-item the worker simply performs the work and
+immediately replies back with the result.\\
 
 \noindent
-In this example work items are just a list of integers, and the result is the
+In this example, work items are just a list of integers, and the result is the
 sum of those integers, but that is not very important for this example.
 
 % What purpose does our example serve?
