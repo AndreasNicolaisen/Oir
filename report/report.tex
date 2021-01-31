@@ -732,6 +732,10 @@ sum of those integers, but that is not very important for this example.
 \section{Evaluation}
 {\tt <intro>}
 
+\subsection*{Idiomaticness}
+
+\begin{itemize}
+\item {\bf Types and constraints} \\
 A part of idiomatic Rust is for example, encoding constraints and communicating
 semantics using the type-system. For example using Rust's ownership and
 uniqueness semantics to enforce the uniqueness of a resource, and using enums
@@ -759,6 +763,7 @@ to the same message\footnote{Technically it's still possible if we generate the
   same request-id twice, but since we use random UUIDs, the chance of a
   collision is {\bf very} small.}.
 
+\item {\bf Safety} \\
 Idiomatic Rust also highly values safety (this is one of Rust's design goals after
 all). But this is usually not as much of a concious choice for Rust code as in
 other system-languages, this is mainly due to the fact that Rust's safety
@@ -772,6 +777,7 @@ parts of Rust's standard library is implemented. The vast majority of our code
 does indeed not use unsafe code, and all our unsafe code is contained inside of
 our \texttt{AnyBox} abstraction.
 
+\item {\bf Errors} \\
 Rust's error model divides program errors in two categories, recoverable errors
 and unrecoverable errors. The former is realized via the type-system, often as
 \texttt{Result} types, which encodes both the value to be returned given a
@@ -804,8 +810,123 @@ to panic. This will in turn cause the pool-server and pool-supervisor (and
 thereby all the pool workers) to be restarted, with the goal of restoring the
 tree-structure to the expected form.
 
+\subsection*{Expressivity}
+
+The question of expressivity can be split into two parts. The first part being,
+``what can be expressed'' and the second being ``how easy is it to express
+certain things''. For the question of what can be expressed, we've already
+mentioned that we've attempted to keep constraints down to a minimum. Of course
+Rust as a language disallows many things that a language like C wouldn't stop
+you from doing, by viture of its strict type-system. First of all, our library
+doesn't require the user to follow a strict way of doing things (one might argue
+that in that case, it would be a framework, not a library), this means that the
+user is free to only partially use our library, for example together with a more
+traditional system, or they can structure their entire application using it if
+they like. The user is able to build their own actors- and behaivor-types if their
+needs are not met by the ones in place. One specific thing that is currently not
+possible to do, due to our library design, is communicating ``up''
+the tree. For example, there's no way, as an actor, to access your supervisor's
+supervisor if it is not globally named, or another actor sends you its mailbox.
+There's nothing architectuel about this limitation, and indeed our API allows
+for this to be implemented easily since the \texttt{start} method takes in an
+optional supervisor-mailbox. So extending supervisors to allow for querying of
+their parent-supervisor would be easy to add. Also in our design it is not
+possible to setup circular supervision structures, nor is it possible to have
+multiple superviors for a single child. This is due to the fact that the
+\texttt{JoinHandle} which supervisors use for keeping tabs on their children is
+unclonable and is never leaked outside the supervisor, which also means that a
+child can't be adopted by another supervisor.
+
+As for the ``how easy is it to express certain things'' question, we'd argue
+that many things commonly done in the actor model are easy to express.
+
+\begin{itemize}
+\item {\bf Defining actors:} Defining
+actors usually requires implementing two interfaces, first the trait of desired
+behaivor to implement (defining how your actor behaves), as well as the
+\texttt{Actor} trait for starting your actor (allowing it to be started from a
+supervisor). A behaviour like \texttt{RequestHandler} abstracts away most of the
+details of running an actor, and leaves the user simply to specific how it acts
+on- and replies to messages. Implementing the \texttt{Actor} trait usually boils
+down to passing the given argument to the constructor of your actor type and
+calling your behaviour's start function.
+\item {\bf Actor communication:} The fundamental way of communication in the
+  actor model is sending messages. Sending messages in our library simply
+  requires having the mailbox of the recipient and the message you want to send.
+  It is impossible to send the wrong kind of message. % More?
+\item {\bf Supervision trees: } Supervision trees can be defined in a terse and
+  declarative manner using \texttt{SupervisorSpec} and
+  \texttt{ChildSpec}s, and can be treated as data-structures, allowing for
+  dynamic delcarations. In addition to using declarative specifications, dynamic
+  sueprvision is also possible via the supervisor API, which simply requires
+  the supervisor's mailbox to use.
+
+  Where the expressiveness of our library is lacking is in the navigation of
+  supervision trees. Because the only way to query a supervisor is by using
+  \texttt{which\_children}, which returns data from all the children of the
+  supervisor, it can become quite verbose to, for example, find a specific sibling
+  by local id, as can be seen in \figref{fig:sibling} from
+  \texttt{PoolServActor}'s \texttt{init} method. Going further down the
+  supervison tree requires futher queries of this kind, which are quite verbose.
+
+  \begin{figure}[h]
+    \centering
+    \begin{minipage}[h]{0.4\linewidth}
+\begin{lstlisting}[language=Rust,basicstyle=\footnotesize]
+// Get the pool supervisor
+let mut pool_sup =
+  which_children(&mut self.supervisor)
+    .await
+    .unwrap()
+    .into_iter()
+    .find(|ch|
+      ch.local_id ==
+       LocalId::Named(POOL_SUP_NAME.to_string()))
+    .unwrap()
+    .mailbox
+    .into_typed::<SupervisorRequest>()
+    .unwrap();
+\end{lstlisting}
+    \end{minipage}
+    \caption{How \texttt{PoolServActor} acquires its sibling's mailbox, the pool-supervisor}
+    \label{fig:sibling}
+  \end{figure}
+These kinds of operations might be relatively common if one wishes to avoid
+global naming of actors. It would therefore help our library's expressivity if
+we added helper functions for navigating the supervision tree in such a targeted manner. As it stands this kind of friction makes it more tempting globally name
+actors and superviors, possibly with dynamic names, which we consider a bad
+thing. Ideally a library should make doing the ``right thing'' easier than doing
+the wrong thing. This is luckily not as much an architectuel problem but instead
+due to us not having defined helper function for these kinds of operations.
+\end{itemize}
+
+A pattern that has fallen out of our design is what we've
+called the ``adapter task'' pattern. It is where an actor is waiting for something to
+be sent over a channel, usually a \texttt{oneshot} channel, and in order to
+handle the receiving of it, it spawns a new task whose sole responsibility is to
+receive the value and forward it to the actor's mailbox as a specific message
+containing the result. This happens for example in the \texttt{PoolServActor} when
+both handling montior messages and when awaiting the results from a worker. As
+described in the implementation section, raw channels are used for replying to
+requests because it makes the fewest assumptions. But often an actor wants to
+deal with this kind of reply the same way it deals with normal messages. This
+``adaptor task'' pattern makes code harder to read. The intent: ``I want to receive the result from this channel as this kind of
+message'', is cluttered with the details of spawning tasks, cloning mailboxes, receiving the
+value, converting it to the message type and then sending it to its own mailbox.
+
+If we were to deal with this, there could be two approaches. Either we could
+embrace this pattern, and add helper functions that generalizes this it, or
+we should re-design our reply-back method. A possible redesign could be to use
+the type-system to create a more generic approach to receiving messages. For
+example one to instead of passing the sender-part of a \texttt{oneshot} channel,
+one could pass dynamic trait object, of a trait that abstracts over what can be
+sent such reply. This could still be a \texttt{oneshot::Sender}, but it could
+also be a mailbox of a message type that the reply can be converted into.
+
+
 % Evaluate how idiomatic the actor model part is
 
+\end{itemize}
 \begin{itemize}
 
 \item How expressive is the library?
