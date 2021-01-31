@@ -749,7 +749,7 @@ sum of those integers, but that is not very important for this example.
 
 
 \section{Evaluation}
-In this section, we will evaulate different parts of our design/implementation,
+In this section, we will evaluate different parts of our design/implementation,
 wrt. different design goals.
 
 \subsection{Idiomaticness}
@@ -757,7 +757,7 @@ wrt. different design goals.
 \begin{itemize}
 \item {\bf Types and constraints} \\
 A part of idiomatic Rust is encoding constraints and communicating
-semantics using the type-system. For example using Rust's ownership and
+semantics using the type-system. For example, using Rust's ownership and
 uniqueness semantics to enforce the uniqueness of a resource and using enums
 like \texttt{Size::Large}/\texttt{Size::Small} instead of using a boolean
 argument like \texttt{is\_large: bool}. We generally only impose the strictly
@@ -769,15 +769,15 @@ iteration --- due to some implementation details concerning storage of mailboxes
 (meaning that it is safe to share references of it between threads). We later
 discovered that we could do away with this constraint, which allows the user to
 for example to send data-structures with internal mutability. Other than in a few
-internal cases where a enum would be preferable to a boolean argument, the only
-obvious missed opertunity for encoding constraints in the type-system is the
+internal cases where an enum would be preferable to a boolean argument, the only
+obvious missed opportunity for encoding constraints in the type-system is the
 case of \texttt{RequestId}s. As detailed in the implementation section, the
-request-handler behaviour uses request-ids for identifiying requests that have
-deferred replies. Currently they're simply an opaque copy-type (i.e. just data),
+request-handler behaviour uses request-ids for identifying requests that have
+deferred replies. Currently, they're simply an opaque copy-type (i.e. just data),
 and it is therefore possible to attempt to reply with the same request-id
 multiple times. Since requests can at most have one reply, this can potentially
-cause a panic at runtime. We could enfore the reply-at-most-once nature of
-requests via the requst-id type, by making it an unclonable type and consuming
+cause a panic at runtime. We could enforce the reply-at-most-once nature of
+requests via the request-id type, by making it an unclonable type and consuming
 it when it's used for a reply. Thereby we've made it impossible to reply twice
 to the same message\footnote{Technically it's still possible if we generate the
   same request-id twice, but since we use random UUIDs, the chance of a
@@ -785,46 +785,46 @@ to the same message\footnote{Technically it's still possible if we generate the
 
 \item {\bf Safety} \\
 Idiomatic Rust also highly values safety (this is one of Rust's design goals after
-all). But this is usually not as much of a concious choice for Rust code as in
+all). But this is usually not as much of a conscious choice for Rust code as in
 other system-languages, this is mainly due to the fact that Rust's safety
-(both memory- and thread-satefy) originates from its type-system and is exercised
+(both memory- and thread-safety) originates from its type-system and is exercised
 through its standard library. Because of this, in most cases if one's code
 doesn't use \texttt{unsafe} and compiles, it should be memory- and thread-safe
 (assuming the libraries used are safe). But in idiomatic Rust, if unsafe code is
-necessary, then it should be limitied to the places where it is strictly
+necessary, then it should be limited to the places where it is strictly
 required, and a safe abstraction should be built on top of it. This is how large
 parts of Rust's standard library is implemented. The vast majority of our code
 does indeed not use unsafe code, and all our unsafe code is contained inside of
 our \texttt{AnyBox} abstraction.
 
 \item {\bf Errors} \\
-Rust's error model divides program errors in two categories, recoverable errors
+Rust's error model divides program errors into two categories, recoverable errors
 and unrecoverable errors. The former is realized via the type-system, often as
 \texttt{Result} types, which encodes both the value to be returned given a
 successful computation, as well as the error to be returned if something goes
-wrong. Then the user of that result then has to inspect which one it was and
-take appropiate action. The latter are realized as panics, which stops the
+wrong. The user of that result has to inspect which one it was and
+take appropriate action. The latter is realized as panics, which stops the
 current thread completely and tries to safely unwind the stack. Panicking is
 mainly used when some invariant has been broken or something outside the
 program's control has gone unrecoverably wrong (like running out of memory).
 What will be deemed a recoverable error will differ greatly from case to case:
 if I am a kernel module, then running out memory probably shouldn't bring the
-entire operating system down, instead I might wish to shutdown processes, or try
-to swap memory to disk, while if I am a simple command line tool, I am probably
+entire operating system down, instead I might wish to shut down processes, or try
+to swap memory to disk, while if I am a simple command-line tool, I am probably
 not going to deal with running out of memory. Therefore it often shouldn't be
 the library making the call of whether an error is recoverable or
 not, and should therefore most of the time be returning result types.
-The exception to this is of-course if the error that has occoured is some
+The exception to this is of-course if the error that has occurred is some
 library-internal invariant that has been violated. Our library implementation
 follows this way of handling errors, only panicking when internal invariants
 have been broken and otherwise exposing error-types to the user. User-code using
 our library on the other hand is a different story. Since our library intends to
-help built robust applications which can handle failure of actors via supervision
+help built robust applications that can handle failures of actors via supervision
 trees, the tolerance for when to panic is lower in user-code, since recovery of
 panics is a core part of the supervisor-tree concept. This usually manifests
 itself as user-code not handling error cases for operations that are expected to
-succeed, and instead panicking. This for example can be seen in our example
-application, where assumptions about the supervision tree structure is a part of
+succeed and instead panicking. This for example can be seen in our example
+application, where assumptions about the supervision tree structure are a part of
 the pool-server's implementation, and any assumption invalidated will cause it
 to panic. This will in turn cause the pool-server and pool-supervisor (and
 thereby all the pool workers) to be restarted, with the goal of restoring the
@@ -844,32 +844,33 @@ doesn't require the user to follow a strict way of doing things (one might argue
 that in that case, it would be a framework, not a library). This means that the
 user is free to only partially use our library, for example together with a more
 traditional system, or they can structure their entire application using it if
-they like. The user is able to build their own actors- and behaivor-types if their
+they like. The user can build their own actors- and behaivor-types if their
 needs are not met by the ones in place. One specific thing that is currently not
 possible to do, due to our library design, is communicating ``up''
-the tree, futher than your own supervisor. For example, there's no way, as an
+the tree, further than your own supervisor. For example, there's no way, as an
 actor, to access your supervisor's
 supervisor, unless it's globally named, or another actor sends you its mailbox.
-There's nothing architectuel about this limitation, and indeed our API allows
+There's nothing architectural about this limitation, and indeed our API allows
 for this to be implemented easily since the \texttt{start} method takes in an
 optional supervisor-mailbox. So extending supervisors to allow for querying of
 their parent-supervisor would be easy to add. Also, in our design it is not
-possible to setup circular supervision structures, nor is it possible to have
-multiple superviors for a single child. This is due to the fact that the
+possible to create circular supervision structures, nor is it possible to have
+multiple supervisors for a single child. This is due to the fact that the
 \texttt{JoinHandle} which supervisors use for keeping tabs on their children is
 unclonable and is never leaked outside the supervisor, which also means that a
-child can't be adopted by another supervisor.
+child can't be adopted by another supervisor.\\
 
+\noindent
 As for the ``how easy is it to express certain things'' question, we'd argue
 that many things commonly done in the actor model are easy to express.
 
 \begin{itemize}
 \item {\bf Defining actors:} Defining
-actors usually requires implementing two interfaces, first the trait of desired
-behaivor to implement (defining how your actor behaves), as well as the
+actors usually requires implementing two interfaces, first the trait of the desired
+behavior to implement (defining how your actor behaves), as well as the
 \texttt{Actor} trait for starting your actor (allowing it to be started from a
 supervisor). A behaviour like \texttt{RequestHandler} abstracts away most of the
-details of running an actor, and leaves the user simply to specific how it acts
+details of running an actor, and leaves the user simply to specify how it acts
 on- and replies to messages. Implementing the \texttt{Actor} trait usually boils
 down to passing the given argument to the constructor of your actor type and
 calling your behaviour's start function.
@@ -879,8 +880,8 @@ calling your behaviour's start function.
   It is impossible to send the wrong kind of message. % More?
 \item {\bf Supervision trees: } Supervision trees can be defined in a terse and
   declarative manner using \texttt{SupervisorSpec} and
-  \texttt{ChildSpec}s. Tjeu can be treated as data-structures, allowing for
-  dynamic delcarations. In addition to using declarative specifications, dynamic
+  \texttt{ChildSpec}s. They can be treated as data-structures, allowing for
+  dynamic declarations. In addition to using declarative specifications, dynamic
   supervision is also possible via the supervisor API, which simply requires
   the supervisor's mailbox to use.
 
@@ -890,7 +891,7 @@ calling your behaviour's start function.
   supervisor, it can become quite verbose. For example, to find a specific
   sibling by local id, one has to do quite a lot of unpacking, as can be seen in
   \figref{fig:sibling} from \texttt{PoolServActor}'s \texttt{init} method. Going
-  further down the supervison tree requires futher queries of this kind, which
+  further down the supervision tree requires further queries of this kind, which
   will become quite verbose.
 
   \begin{figure}[h]
@@ -915,30 +916,32 @@ let mut pool_sup =
     \caption{How \texttt{PoolServActor} acquires its sibling's mailbox, the pool-supervisor}
     \label{fig:sibling}
   \end{figure}
-These kinds of operations might be relatively common, if one wishes to avoid
+These kinds of operations might be relatively common if one wishes to avoid
 global naming of actors. It would therefore help our library's expressivity if
 we added helper functions for navigating the supervision tree in such a targeted
 manner. As it stands, this kind of friction makes it more tempting to globally name
-actors and superviors, possibly with dynamic names, which we consider a bad
-thing. Ideally a library should make doing the ``right thing'' easier than doing
-the wrong thing. This is luckily not as much an architectuel problem but instead
-due to us not having defined helper function for these kinds of operations.
+actors and supervisors, possibly with dynamic names, which we consider a bad
+thing. Ideally, a library should make doing the ``right thing'' easier than doing
+the wrong thing. This is luckily not as much an architectual problem but instead
+due to us not having defined helper functions for these kinds of operations.
 \end{itemize}
 
+\noindent
 A pattern that has fallen out of our design is what we've
 called the ``adapter task'' pattern. It is where an actor is waiting for something to
 be sent over a channel, usually a \texttt{oneshot} channel, and in order to
 handle the reception of it, it spawns a new task whose sole responsibility is to
 receive the value, and forward it to the actor's mailbox as a specific message
 containing the result. For example, this happens in the \texttt{PoolServActor} when
-both handling montior messages and when awaiting the results from a worker. As
+both handling monitor messages and when awaiting the results from a worker. As
 described in the implementation section, raw channels are used for replying to
 requests because it makes the fewest assumptions. But often an actor wants to
 deal with this kind of reply the same way it deals with normal messages. This
 ``adaptor task'' pattern makes code harder to read. The intent: ``I want to receive the result from this channel as this kind of
 message'', is cluttered with the details of spawning tasks, cloning mailboxes, receiving the
-value, converting it to the message type and then sending it to its own mailbox.
+value, converting it to the message type, and then sending it to its own mailbox.\\
 
+\noindent
 If we were to deal with this, there could be two approaches. Either we could
 embrace this pattern, and add helper functions that generalizes this it, or
 we should re-design our reply-back method. A possible redesign could be to use
@@ -951,9 +954,9 @@ also be a mailbox of a message type that the reply can be converted into.
 \subsection{Final evaluation thoughts}
 All in all, our implementation provides all of the necessary building blocks for
 building actor model systems. We ensure the amount type-safety we set out to
-get, while not making it unnecessarily restrictive. It is fairly easy to setup
+get, while not making it unnecessarily restrictive. It is fairly easy to set up
 supervision trees, while still allowing the user to add to its layout
-dynamically. There are some areas that are harder use than necessary, but this
+dynamically. Some areas are harder to use than necessary, but this
 might be improved if we added some helper functions. We could also introduce
 some type constraints, which would give stronger invariants, and prevent
 possible panics at runtime. Our library is expressive enough that a user can
