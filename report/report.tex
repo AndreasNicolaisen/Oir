@@ -591,7 +591,7 @@ be seem in \figref{fig:example_diagram}.
 \begin{figure}[h!]
   \centering
   \includegraphics[width=0.5\textwidth]{./resources/PoolDiagram.pdf}
-  \caption{Diagram for example}
+  \caption{Diagram of our example programs supervisor tree}
   \label{fig:example_diagram}
 \end{figure}
 
@@ -620,14 +620,15 @@ supervise(
 \end{wrapfigure}
 
 The example is of a worker pool. The idea is that work can be submitted to a
-work-server, which then delegates the work to a worker from the pool of workers.
-The pool of workers are all transient children of the worker supervisor which
+pool-server, which then delegates the work to a worker from a pool of workers.
+The pool of workers are all transient children of the pool supervisor which
 operates using a one-for-one strategy, restarting any worker that crashes. The
-work-server actor and the pool-supervisor are in turn supervised under a common
-supervisor. This supervisor uses the one-for-all strategy, retstarting both the
-work-server and the pool-supervisor if either crashes. The specification can be
-seen in \figref{fig:ex-spec}.
+pool-server actor and the pool-supervisor are in turn supervised under a common
+supervisor. This supervisor uses the one-for-all strategy, restarting both the
+pool-server and the pool-supervisor if either crashes. The specification can be
+seen in \figref{fig:ex-spec}.\\
 
+\noindent
 We have chosen this example because it is a simplified (but non-trivial) example
 of an realistic application. It exercises the following aspects of our
 implementation:
@@ -640,35 +641,43 @@ implementation:
   pool-server actor then returns to whoever submitted the work.
 \end{itemize}
 
+\noindent
 The pool-server implementation (\texttt{PoolServActor}) is an instance of the
-\texttt{RequestHandler} behaviour. It's mesasge type is
-\texttt{PoolServMessage}.
+\texttt{RequestHandler} behaviour. Its message type is
+\texttt{PoolServMessage}.\\
 
+\noindent
 Upon being started (i.e. when its \texttt{init} method
-is called), the pool-server actor retrieves its sibling's (the pool-supervisor)
-mailbox by querying its own supervisor's children with \texttt{which\_children}
-and finding its sibling by its local name. Then it queries the pool-supervisor
-for all its children and monitors them all, then it spawns a task for each child
-that receive monitor messages, and sends a message to the pool-server's mailbox
-with the monitor result (whether the child has shutodwn or restarted) via the
-\texttt{{PoolServMessage::WorkerMonitor}} message. This allows monitor messages
-to be handled under the pool-server's \texttt{handle\_request} method.
+is called), the pool-server actor first asks its superviser for a list of its
+children (Using \texttt{which\_children}). It then finds the child with the
+local name of its sibling (the pool-supervisor), and thereby gets its mailbox.
+Then it queries the pool-supervisor for all its children and monitors them all.
+Then it spawns a task for each child that receive monitor messages, and sends a
+message to the pool-server's mailbox with the monitor result (whether the child
+has shutdown or restarted) via the \texttt{{PoolServMessage::WorkerMonitor}}
+message. This allows monitor messages to be handled under the pool-server's
+\texttt{handle\_request} method.\\
 
-When a peice of work is requested to be executed, the pool-server is sent a
+\noindent
+When a piece of work is requested to be executed, the pool-server is sent a
 \texttt{PoolServMessage::Start} containing the work item. It then forwards the
-work item to a worker actor together with the request-id. Which worker actor is
-decided based on a round-robin scheme. A task is then spawned that awaits the
-reply from the worker, and forwards it to the pool-server via the
+work item to a worker actor. Which worker actor is decided based on a
+round-robin scheme. A task is then spawned that awaits the reply from the
+worker, and forwards it to the pool-server via the
 \texttt{PoolServMessage::Result} message. When the pool-server receives a result
-it then uses request-id associated with the result to reply with the result to
-the sender of the work request. If the pool-server receives a
-\texttt{PoolServMessage::WorkerMonitor} it either panics if a worker has
-shutdown (since it is going to be restarted anyway), and if the a worker has
-restarted it updates its mailbox, so it has an up-to-date mailbox for that
-worker.
+it then uses the request-id associated with the result to reply with the result
+to the sender of the work request. If a worker crashes, it will be restarted by
+the pool-supervisor. The pool-server will then be notified of the restart, and
+will update the mailbox of the corresponding worker, to the one of the new
+worker. If the pool-server is notified that a worker has been shutdown, this
+indicates that the pool-supervisor is being shutdown or restarted. Therefore the
+worker pool is unavailable, and the pool-server can't continue operating and
+therefore panics. Since the pool-server is ``Tied`` to the pool-supvisor (due to
+the one-for-all restart strategy), it would have been restarted anyway.\\
 
-By delegating the receiving of the result from the worker, the pool-server can
-avoid blocking in the request handler while waiting for the result. Then allows
+\noindent
+By delegating the reception of the result from the worker, the pool-server can
+avoid blocking in the request handler while waiting for the result. This allows
 it to handle other messages while the work is completed by a worker. It would
 also be possible --- instead of awaiting a reply from the worker --- to make the
 worker send the result as a message to the pool-server actor instead (acquiring
@@ -679,14 +688,16 @@ implementing it. The reason is that since workers are also instances of the
 reply anyway, so we opted to use that. As mentioned in the implementation
 chapter, we could also extend the \texttt{RequestHandler} to handle requests
 that don't expect a reply, and in that case the alternative design would make
-even more sense.
+even more sense.\\
 
+\noindent
 The worker actors (\texttt{PoolWorkerActor}) are very simple instances of the
 \texttt{RequestHandler} behaviour. They have no state and only handles one
 message; the work item message, which consists of the work data and a
 request-id. Upon receiving a work-item the worker simply performs the work, and
-replies back with the result and the request-id.
+replies immediately back with the result.\\
 
+\noindent
 In this example work items are just a list of integers, and the result is the
 sum of those integers, but that is not very important for this example.
 
@@ -694,12 +705,6 @@ sum of those integers, but that is not very important for this example.
 % - Supervisor trees, supervisor querying, interactor communication
 %
 
-
-\begin{itemize}
-\item High-level architecture (with nice diagrams \texttt{:)})
-\item Motivation, i.e. what does this example demonstrate
-\item What does this example show/what can we observe/conclude from it
-\end{itemize}
 
 \section{Evaluation}
 \begin{itemize}
