@@ -20,9 +20,21 @@
 \maketitle
 
 \section{Introduction}
-Some introduction with a reference\cite{SuturePost}
+In this report, we will present our implementation of a actor library in Rust,
+inspired by Erlang/OTP. To do this we will start by introducing relevant
+background on the actor model, and how Erlang and OTP works. We will analyze how
+this can be implemented in Rust, and explain the areas where it is easy to get
+similar behavior, and also the areas where it will be difficult to implement
+similar behavior. We will then go into how we designed our library, explaining
+our design goals and decisions. We will then explain how we implemented this
+design, and what difficulties we encountered, and what decisions we made. Then
+we have an example of how the library could be used, showcasing different parts
+of the library. Finally, we will do an reflect on how the effort went, and
+evaluate if we acheived our design goals.
 
 \section{Background \& Analysis}
+This sectiontion is partially inspired by Jeremy Bowers blog post on his
+implementation of a actor library in GO\cite{SuturePost}.
 %% \textit{What's OTP?}
 %% \begin{itemize}
 %% \item What is the actor model
@@ -629,6 +641,7 @@ supervise(
   \label{fig:ex-spec}
 \end{wrapfigure}
 
+\noindent
 The example is of a worker pool. The idea is that work can be submitted to a
 pool-server, which then delegates the work to a worker from a pool of workers.
 The pool of workers are all transient children of the pool supervisor which
