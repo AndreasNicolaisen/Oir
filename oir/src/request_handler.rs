@@ -169,7 +169,8 @@ where
                     Entry::Occupied(mut e) => Ok(Reply(Some(e.insert(value)))),
                     Entry::Vacant(e) => {
                         // Collect so we don't hold reference to key across await barriers
-                        let pending_ids = self.pending
+                        let pending_ids = self
+                            .pending
                             .drain_filter(|&mut (_id, ref k)| k == &key)
                             .collect::<Vec<_>>();
                         for (id, _) in pending_ids {
@@ -180,7 +181,7 @@ where
                         Ok(Reply(None))
                     }
                 }
-            },
+            }
         }
     }
 }
