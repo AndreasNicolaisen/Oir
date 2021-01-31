@@ -14,10 +14,29 @@
 \date{\today}
 
 \begin{document}
-
-% TODO: Actors vs. processes
+\pagenumbering{roman}
 
 \maketitle
+
+\begin{center}
+  \large{\bf Abstract}\\
+  \vspace{0.5cm}
+  \begin{minipage}[h]{0.6\linewidth}
+    In this report we'll be describing our design and implementation of an actor
+    model system inspired by Erlang/OTP, implemented in Rust. The focus of the
+    library has been to port the core principles of OTP to Rust in a way
+    idiomatic both to the actor model and Rust. We'll discuess our design
+    decisions and the results of our experiments in form of a example
+    application, which we've used to evaluate our library.
+  \end{minipage}
+\end{center}
+\newpage
+
+\tableofcontents
+\newpage
+
+\pagenumbering{arabic}
+\setcounter{page}{1}
 
 \section{Introduction}
 In this report, we will present our implementation of a actor library in Rust,
@@ -34,7 +53,7 @@ evaluate if we acheived our design goals.
 
 \section{Background \& Analysis}
 This section is partially inspired by Jeremy Bowers blog post on his
-implementation of a actor library in GO\cite{SuturePost}.
+implementation of a actor library in Go\cite{SuturePost}.
 %% \textit{What's OTP?}
 %% \begin{itemize}
 %% \item What is the actor model
