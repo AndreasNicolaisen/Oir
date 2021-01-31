@@ -443,7 +443,7 @@ dynamic mailbox into an unnamed one, this is not a big performance concern,
 since that should be a relatively one-off thing in any given scenario.
 
 \item{\bf Supervisors} \\
-
+Supervisor trees are specified using the \texttt{SupervisorSpec} and
 \texttt{ChildSpec} data-structures. \\ The \texttt{SupervisorSpec} contains the
 supervisor's restart strategy (one-for-one, one-for-all or rest-for-one) and a
 list of \texttt{ChildSpec}s. \texttt{ChildSpec}s contain the child's restart
@@ -515,6 +515,12 @@ always closed after a shutdown message has been sent. Monitors are registered
 by sending the supervisor a monitor message using the \texttt{monitor} function,
 which consists of the local-id of the child to be monitored and the
 \texttt{Sender} to send the notification with.
+
+We have not implemented the logic for shutting down the supervisor if too many
+restarts occur in a short (user-specified timespan). This behaviour is found in
+OTP and ensures that supervisors don't get stuck in restart loops when the
+problem should be dealt with at a higher level. We have not implemented this due
+to time constraints.
 
 \item {\bf The request-handler behaviour} \\
   This behaviour is comparable to OTP's \texttt{gen\_server}, it allows for
