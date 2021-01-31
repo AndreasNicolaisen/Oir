@@ -22,11 +22,11 @@
   \large{\bf Abstract}\\
   \vspace{0.5cm}
   \begin{minipage}[h]{0.6\linewidth}
-    In this report we'll be describing our design and implementation of an actor
+    In this reportm we'll be describing our design and implementation of an actor
     model system inspired by Erlang/OTP, implemented in Rust. The focus of the
     library has been to port the core principles of OTP to Rust in a way
-    idiomatic both to the actor model and Rust. We'll discuess our design
-    decisions and the results of our experiments in form of a example
+    idiomatic both to the actor model and Rust. We'll discuss our design
+    decisions and the results of our experiments in form of an example
     application, which we've used to evaluate our library.
   \end{minipage}
 \end{center}
@@ -39,70 +39,29 @@
 \setcounter{page}{1}
 
 \section{Introduction}
-In this report, we will present our implementation of a actor library in Rust,
+In this report, we will present our implementation of an actor library in Rust,
 inspired by Erlang/OTP. To do this we will start by introducing relevant
 background on the actor model, and how Erlang and OTP works. We will analyze how
 this can be implemented in Rust, and explain the areas where it is easy to get
-similar behavior, and also the areas where it will be difficult to implement
-similar behavior. We will then go into how we designed our library, explaining
+similar behaviour, and also the areas where it will be difficult to implement
+similar behaviour. We will then go into how we designed our library, explaining
 our design goals and decisions. We will then explain how we implemented this
 design, and what difficulties we encountered, and what decisions we made. Then
 we have an example of how the library could be used, showcasing different parts
 of the library. Finally, we will do an reflect on how the effort went, and
-evaluate if we acheived our design goals.
+evaluate if we achieved our design goals.
 
 \section{Background \& Analysis}
 This section is partially inspired by Jeremy Bowers blog post on his
 implementation of a actor library in Go\cite{SuturePost}.
-%% \textit{What's OTP?}
-%% \begin{itemize}
-%% \item What is the actor model
-%% \item What is the goal of OTP?
-%% \item What are the ``design principles'' of OTP?
-%% \item How is it used?
-%% \end{itemize}
-
-%% \textit{How does this interact with Erlang}
-%% \begin{itemize}
-%% \item What parts of Erlang/BEAM is ``needed'' for implementing OTP? (processes,
-%%   traps, mailboxes \& etc.)
-%% \end{itemize}
-
-%% \textit{Will probably have a similar structure to the Suture blog-post}
-%% \begin{itemize}
-%% \item What parts of OTP are we interested in porting.
-%% \item How does this translate to Rust?
-%% \item What does Rust make easier/harder?
-%% \item What different things could an implementation focus on?
-%%   \textit{Like performance, robustness, idiomaticity, expressiveness, ergonomics}.
-
-%%   We'll try to find out whether it \textit{can} be done idiomaticly and ergonomically.
-
-%% \item What have we chosen to focus on?
-%% \end{itemize}
-
-%% An implementation of an OTP-alike library will have to contain functionality in the lines of:
-%% \begin{itemize}
-%% \item \textbf{Message sending}\\
-%%   The different actors should be able to communicate with each others, using
-%%   messages. To accomplish this, they will need some way to refer to each other.
-%%   This could be done by using global ids, registered names or passing around
-%%   references to each other.
-%% \item \textbf{Supervisor trees}\\
-%%   In order to organize the program, the actors should be organized into
-%%   supervisor trees. These will be trees of supervisor actors, with worker actors
-%%   as leafes. The supervisors should be able to monitor and restart its children,
-%%   should they crash, in accordance with supplied strategies and policies.
-%% \item \textbf{Behaviours}
-%% \end{itemize}
 
 % TODO: Talk about local and global naming
 
 \subsection{The actor model}
-In the actor model, an application is structured around a collections of
+In the actor model, an application is structured around a collection of
 independent actors. Generally, each actor has the following abilities:
 \begin{itemize}
-\item Each actor has the abiltity to send messages to other actors, and
+\item Each actor has the abilty to send messages to other actors, and
   themselves receive messages.
 \item The actors can decide to take any action they desire based, on the messages
   they receive. This includes modifying some state that they hold on to, which
@@ -111,13 +70,13 @@ independent actors. Generally, each actor has the following abilities:
 \end{itemize}
 
 \noindent
-The actors exist as seperate entities, and should not be able to affect each
+The actors exist as separate entities, and should not be able to affect each
 other, unless it is through messaging each other. Typically, a lot of actors are
-created, and each actor is tasked with handeling small tasks.\\
+created, and each actor is tasked with handling small tasks.\\
 
 \noindent
 The message passing itself can be realized in two different ways, synchronous
-and asynchronous. By synchronous, it is understood that when an actors sends
+and asynchronous. By synchronous, it is understood that when an actor sends
 another actor a message, it will only continue its execution when the other
 actor has received the message. By asynchronous, it is understood that the
 message is sent much like a letter, in that once we have sent a message we don't
@@ -125,42 +84,42 @@ know when/if the other actor will receive it. In different realizations of the
 actor model, there will be different guarantees as to whether messages will
 always be received, or if they can be lost, as well as what order the messages
 can be in. How the message passing works will also differ. All actors might have
-some address that can be used to send them messages, or be given names that can
+some address that can be used to send them messages or be given names that can
 change what they refer to, during the execution of the program.
 
 \subsection{Erlang processes}
 As mentioned, in an idiomatic actor model system, a lot of actors are often
-created. This means that we have the possibility to run the actors concurrently,
-but we have to be careful of how we do it. If we were to fx. run each actor on a
-seperate OS thread, we would encounter a large overhead each time a new actor
-are created (as well as the cost of context switching). Erlang solves this by
+created. This means that we can run the actors concurrently,
+but we have to be careful about how we do it. If we were to, for example, run each actor on a
+separate OS thread, we would encounter a large overhead each time a new actor
+is created (as well as the cost of context switching). Erlang solves this by
 providing lightweight processes, which are quick to create and only take up a
 small amount of memory when created.\\
 
 \noindent This allows us to use a new process for each actor that we want in our
 system, without encountering a large overhead. Each process is equipped with a
-\texttt{PID} (Process IDentifer). If an process (or actor) knows another's PID,
+\texttt{PID} (Process IDentifer). If a process (or actor) knows another's PID,
 they can use it to send them messages, monitor it, as well as ``kill'' it.
 Message sending is asynchronous, and anything can be sent. The other process can
-then specify what it want to receive at a given time, and how to act based upon
+then specify what it wants to receive at a given time, and how to act based upon
 the messages it receives. By monitoring another process, the monitoring process
-will be notified if the monitored processs dies\footnote{Processes can also link
+will be notified if the monitored process dies\footnote{Processes can also link
 to each other, but that is beyond the scope if this project}. While this is not
 part of the actor model, it is often quite useful. By sending a special signal,
 a process can ``kill'' another process, which shutdowns the process, no matter
-what is was currently doing. This is useful when organizing actors in
+what it was currently doing. This is useful when organizing actors in
 \textit{supervision trees}, which will be discussed in the next section.
 
 \subsection{OTP}
-Developing application with Erlang is most often coupled with using OTP (Open
+Developing an application with Erlang is most often coupled with using OTP (Open
 Telecom Platform). OTP is a platform consisting of a compiler, libraries,
-middelwares, a database and some tools\cite{ErlangOTPDocs}. What we will be most
-concerned with is supervision trees and behaviors.
+middlewares, a database and some tools\cite{ErlangOTPDocs}. What we will be most
+concerned with is supervision trees and behaviours.
 
 \subsubsection{Supervision trees}
 Supervision trees are a way to organize actors into supervisors and workers, in
 a way that supports reliability. This is under the philosophy that parts of any
-implementation will, from time to time, crash, and it should be setup to handle
+implementation will, from time to time, crash, and it should be set up to handle
 it when it does. An example of a supervision tree can be seen in
 \figref{fig:supervision_tree}.
 
@@ -175,50 +134,50 @@ it when it does. An example of a supervision tree can be seen in
 
 \noindent
 A supervisor will have a number of children, which can be both workers and other
-supervisors. Should any of a supervisor's children shutdown unexpectedly, the
-supervisor have the responsibility of starting it back up again, if it is
+supervisors. Should any of a supervisor's children shut down unexpectedly, the
+supervisor has the responsibility of starting it back up again, if it is
 specified that it should be restarted. Further, the children could have
-interdepencies, so the supervisors can also restart other children than the ones
-who shutdown unexpectedly.
+interdependencies, so the supervisors can also restart other children than the ones
+who shut down unexpectedly.
 
-\subsubsection{Behaviors}
+\subsubsection{Behaviours}
 In an actor model system, many actors will often follow similar patterns. For
-example, all of the supervisors in a tree will follow a similar patterns, some
+example, all of the supervisors in a tree will follow a similar pattern, some
 actors will be simple servers, some will be state machines, etc. Knowing this,
-OTP providers modules for a number of behaviors. These split the implementation
-of the actor into 2 parts, the generic part and part specific to the actor. The
+OTP providers modules for a number of behaviours. These split the implementation
+of the actor into two parts, the generic part and part specific to the actor. The
 generic part is implemented in OTP, and the part specific to the actor is left
 for the user to implement. This is done by implementing a set of callback
-functions. These are used by the generic part of the behavior, and is where the
+functions. These are used by the generic part of the behaviour, and is where the
 user implements their part of the actor.
 
 \subsection{How can this be implemented in Rust}
 \begin{itemize}
 \item \textbf{Immutability and actor isolation}\\
-  In Erlang all data are imutable, and processes are isolated from each other.
+  In Erlang all data is immutable, and processes are isolated from each other.
   One of the main benefits of isolation, is to avoid shared mutable state, and
-  the problems the arise from. In Rust, different threads are not isolated from
-  each other the same way that processes in Erlang are, and neither are all data
-  immutable. However, Rusts type system prevents the danger of mutable shared
-  state, both in single and multi thread contexts, avoiding the common downsides
+  the problems that arise from it. In Rust, different threads are not isolated from
+  each other the same way that processes in Erlang are, and neither is all data
+  immutable. However, Rust's type system prevents the danger of mutable shared
+  state, both in single- and multi-threaded contexts, avoiding the common downsides
   of shared and mutable state. This means that the actors can affect other
   threads by ways other than message passing, however, the common downsides of
   this are avoided.
 \item \textbf{Message passing}\\
   Unlike in Erlang, there are no intrinsics for sending and receiving messages
   in Rust. However, the standard library provides a multiple producer, single
-  comsumer channel which fulfills this purpose. It will require some more code
-  to create and handle these channels, but hopefully this can all be done in the
+  comsumer channel which fulfils this purpose. It will require some more code
+  to create and handle these channels, but hopefully, this can all be done in the
   library itself, so that the experience of messaging other actors are largely
   the same as in Erlang.
 \item \textbf{Monitoring and killing other processes}\\
-  We have chosen to realize our actors as tokio tasks (see design/implementation
+  We have chosen to realize our actors as Tokio tasks (see design/implementation
   sections), which does not provide the same functionality as Erlang does for
   its processes.
 
   This means that we cannot simply monitor other actors the way we can in
   Erlang. We \textit{can} know when a task finishes, but only by awaiting its
-  joinhandle, which can only be done by one thread. This is becaused it cannot
+  join-handle, which can only be done by one thread. This is becaused it cannot
   be cloned. This means that we need to implement some system for notifying
   other actors, of when an actor terminates, inorder to get the same monitoring
   functionality.
@@ -228,22 +187,16 @@ user implements their part of the actor.
   theoretically be done if we were using OS threads, but for reasons discussed
   in the design section, we're not. Instead, we allow for asking another actor
   to terminate itself, by sending a message. These kinds of messages are
-  prioritised over other kinds of messages, so it achevives close to the same
+  prioritised over other kinds of messages, so it achieves close to the same
   semantics are Erlang, but not exactly.
-\item \textbf{Behaviors}\\
-  In Erlang/OTP, the way you use behaviors, is by implementing a set of callback
-  functions, which are then called by the behavior module. The way to do this in
+\item \textbf{Behaviours}\\
+  In Erlang/OTP, the way you use behaviours, is by implementing a set of callback
+  functions, which are then called by the behaviour module. The way to do this in
   Rust is to implement a trait, with a series of methods, for a type. These
   accomplish the same thing, using different language features.
 \end{itemize}
 
 \section{Design}
-%% \begin{itemize}
-%% \item Talk about what an OTP implementation overall consists of (in general)
-%% \item Talk about our high-level design decisions
-%% \item Talk about what design experiments we did (And explain why we went back on
-%%   some of them)
-%% \end{itemize}
 \subsection{Design goals}
 In the design of our library, we have set the following goals:
 \begin{itemize}
@@ -252,21 +205,21 @@ In the design of our library, we have set the following goals:
 \item Strongly type the messages that the actors will pass to each other.
 \item Allow the user to write idiomatic actor model code, in a way that is also
   idiomatic to Rust.
-\item Enable to user to easily organize their actors in supervision trees, both
+\item Enable the user to easily organize their actors in supervision trees, both
   in a declarative as well as dynamic fashion.
 \item Make it easy for the user to implement common patterns, without having to
-  worry about how the actors interacts with the supervision tree.
+  worry about how the actors interact with the supervision tree.
 \end{itemize}
 
 \noindent
 Overall, the aim is to create a library that provides better type-safety than
 what is experienced in Erlang, without making it harder to implement an
-application. This should be accomblished by using Rust's own guarantees, so that
+application. This should be accomplished by using Rust's own guarantees, so that
 a programmer experienced with Rust can use it, without a large barrier to entry.
 
 \subsection{Design details}
 We've designed our library to be implemented with an asynchronous execution
-model. This allows us to easily acheive concurrency between the actors, in both
+model. This allows us to easily achieve concurrency between the actors, in both
 single and multi-threaded contexts. It is not necessarily a requirement for
 actors to run in parallel. By making our library asynchronous we enable the
 implementation to take advantage of cooperative multi-threading via ``green
@@ -274,96 +227,92 @@ threads'', which can both work in single-threaded and multi-threaded contexts.
 Green threads are a more light-weight alternative to using operating system
 threads, which is important because idiomatic use of the actor model often
 involves creating actors for even small tasks. If creating an actor required
-starting an operating system thread, then the overhead would be quite signficant
+starting an operating system thread, then the overhead would be quite significant
 compared to green threads.\\
 
 % What is actor?
 \noindent
 Actors in our library are realized as isolated computations % ?: Word choice
-which receive and acts upon messages sent to them through their mailboxes.\\
+which receive and act upon messages sent to them through their mailboxes.\\
 
 \noindent
-Mailboxes are objects that enables the sending of messages to an actor, and are
+Mailboxes are objects that enable the sending of messages to an actor, and are
 comparable to PIDs in Erlang. We've opted to not hide mailboxes behind an
 indirection, like a PID, and instead make actors use and store the
-data-structure required for the actual sending of message directly. This is done
+data-structure required for the actual sending of messages directly. This is done
 to avoid having to do extra book-keeping (like maintaining a --- possibly global
---- map of PID to the data-structure required for sending message). This is at
+--- map of PID to the data-structure required for sending messages). This is at
 the cost of having to possibly store more data per mailbox compared to PID, as
 well as having to clone the mailbox whenever it needs to be sent to another
 actor (which is required due to Rust's ownership system).\\
 
 \noindent
 All actors can receive two kinds of messages. The first being system messages
-which pertain to system-level concerns. Currently this only involves requesting
+which pertain to system-level concerns. Currently, this only involves requesting
 an actor to shut down. In addition to system messages, actors can also
 receive messages of their own specific message type. The message type of an
 actor is specified as part of the actor's implementation. The only requirement
 for an actor's message type is that it's transferable between threads, i.e. it
 implements/satisfies the \texttt{Send} trait in Rust. This requirement allows
-actors to run on seperate threads. Though by only having this requirement, we do
+actors to run on separate threads. Though by only having this requirement, we do
 not have the required invariants to allow for inter-process or remote
 communication between actors, since that would require that messages were also
-serializable. The reason we choose to have the system messages as a seperate
+serializable. The reason we choose to have the system messages as a separate
 thing, is to make it easier to deal with actors of different types, in contexts
-where their type is irrelevant (such as in the supervisor implementaiton). In
-hindsight, this is properly an unnecesarry complication, since all messages
-could be wrapped in an some sort of \texttt{Either<SystemMessage, MessageType>},
-or \texttt{SystemMessage} could have another variant containing the actors
+where their type is irrelevant (such as in the supervisor implementation). In
+hindsight, this is properly an unnecessary complication, since all messages
+could be wrapped in some sort of an \texttt{Either<SystemMessage, MessageType>},
+or \texttt{SystemMessage} could have another variant containing the actor's
 message type. This would require more conversion in the background, but from the
-users perspective, it whould properly be easier to use, and we wouldn't have to
+users perspective, it would probably be easier to use, and we wouldn't have to
 store/use two channels for each mailbox. On the other hand, having the two kinds
-of messages in seperate channels, makes it easier to prioritise system message,
+of messages in separate channels, makes it easier to prioritise system message,
 without having to go through all pending messages.\\
 
 \noindent
 Actors are responsible for acting upon the messages they receive. This is mainly
-inteded to be done through behaivors which in our library is the equivalent
-concept as in OTP. In our library behaivors are realized as different traits
+intended to be done through behaviours which in our library is the equivalent
+concept as in OTP. In our library behaviours are realized as different traits
 with methods for the user to implement their own business logic and usually a
-helper function for starting actors implementing that behaivor.\\
-% TODO: Introduce behaivors from Erlang in Background
+helper function for starting actors implementing that behaviour.\\
+% TODO: Introduce behaviours from Erlang in Background
 
 \noindent
 Given this context, we will explain our design of different parts, in more
 specific terms:
 \begin{itemize}
 \item \textbf{Mailboxes}\\
-  %% We have opted to statically type messages. This means that each actor can only
-  %% receive messages of its data type, as well as ``System messages''. Message
-  %% sending is accomplished using ``Mailboxes''. Using these actors can
-  %% send the 2 kinds of messages to each other.
-  There 3 kinds of mailboxes, unnamed, named and dynamic. Unnamed mailboxes are
+  There are three kinds of mailboxes, unnamed, named and dynamic. Unnamed mailboxes are
   the main kind of mailbox, which allows the actors to send system messages and
   data messages to each other. Should the receiving actor crash, trying to send
   a message to it, using an unnamed mailbox, will result in an error. Named
   mailboxes are an indirection over unnamed mailboxes, used for sending messages
-  to an actor that is registered globally with a name. These 2 first kind of
+  to an actor that is registered globally with a name. These two first kinds of
   mailboxes are typed over the message type. The dynamic mailbox is mainly used
   in situations where multiple different actor types can occur, such as when
-  getting a list of a supervisors children. It can only be used for sending
+  getting a list of a supervisor's children. It can only be used for sending
   system messages, until the user tries to casts it to a concrete type. This
   allows the user to handle them without caring about the underlying message
   type.
 \item \textbf{Actor naming}\\
   There are two forms of naming of actors, global and local, both given before
   the actor is started. The names are used for two different purposes, for
-  differenting between actors locally, and for aquiring a reference to an actor.
+  differentiating between actors locally, and for acquiring a reference to an actor.
   An actor can ask a supervirsor (usually its own) for a list of its children.
   The supervisor then replies with a list of its children, consisting of the
   children's names, and the children's mailboxes. These names will be the names
-  that where given before the child was started (either global or local). If a
+  that were given before the child was started (either global or local). If a
   child is not given a name, it will be assigned one by its supervisor. If a
-  child is  globally named, it will additonally have its mailbox globally
+  child is  globally named, it will additionally have its mailbox globally
   registered by  its supervisor on startup. This global registration is useful
-  for commucating with often used actors, without having to acquire a reference
+  for communicating with often used actors, without having to acquire a reference
   to its mailbox through other means. This is how the named mailboxes work.
 \item \textbf{Supervision}\\
   Our design of supervision breaks into two parts, how the user specifies it and
-  how they interact with it. We have chosen to use a declarative approch when
-  specifying how a supervision tree should be created, in order to aliviate the
+  how they interact with it. We have chosen to use a declarative approach when
+  specifying how a supervision tree should be created, in order to alleviate the
   user from having to think about how supervision trees are built. Instead, they
-  only have to think about how they want to structure their supervion
+  only have to think about how they want to structure their supervision
   tree/application. We allow the user to interact with the supervisors through
   messages, so that they can establish contact between actors dynamically. This
   is useful for dealing with dynamic instantiation of actors, and for discovering
@@ -372,60 +321,56 @@ specific terms:
   \begin{itemize}
   \item \textbf{Supervisor - Specification}\\
     In order to make it easier for the user, supervision trees can be created
-    declarativly, using a specification api. This consist of building blocks of
+    declaratively, using a specification API. This consist of building blocks of
     supervisors and workers, which are put into a tree.
-    % TODO: Insert example (diagram and code example)
-    A supervisor will need some restart strategy, as well as list of child
-    specications. A worker will need some restart policy, and also takes an
+    A supervisor will need some restart strategy, as well as a list of child
+    specifications. A worker will need some restart policy, and also takes a
     starting argument. Both supervisors and workers can be named, either locally
     or globally.
   \item \textbf{Supervisor - Interaction}\\
     When interacting with a supervisor, it is important to note that supervisors
     themselves are actors, just like workers. This means that they can receive
     messages like any other actor. They can receive system messages asking them to
-    shutdown, as well as requests. These requests allow other actors to ask for a
-    list of the supervisors children, to ask the supervisor to start another
+    shut down, as well as requests. These requests allow other actors to ask for a
+    list of the supervisor's children, to ask the supervisor to start another
     child with given a specification, and allows for monitoring children i.e.
-    being notified whenever a child is shutdown or restarted. All children are
+    being notified whenever a child is shut down or restarted. All children are
     given a mailbox to their supervisor, so that they can make these requests of
     them.
   \end{itemize}
 \item \textbf{Behaviours}\\
-  The concept of behavious from OTP are implemented as traits, that should be
-  implemented in order to fulfill the behaviour. This will consist of a number
+  The concept of behaviours from OTP are implemented as traits, that should be
+  implemented in order to fulfil the behaviour. This will consist of a number
   of methods that should be implemented, and they (the traits) will often be
   over a type. They will come with a helper method that provides the common
-  boiler plate functionality (eg. the handeling of system messages). This
-  method serves the same purpose as the behavoir module in Erlang. When a
-  message passed to the actor is not part of the boiler plate, the behaviour
+  boilerplate functionality (eg. the handling of system messages). This
+  method serves the same purpose as the behaviour module in Erlang. When a
+  message passed to the actor is not part of the boilerplate, the behaviour
   will pass this message onto the implementation of the trait.
-\item \textbf{Asynchronous exceptions}
-  Unlike in Erlang, actors can't kill each other directly. Instead each
-  actors can request that an other actors shuts itself down. The handeling of
-  this message will then take place in library code, to avoid usercode from
+\item \textbf{Asynchronous exceptions}\\
+  Unlike in Erlang, actors can't kill each other directly. Instead, each
+  actor can request that another actor shuts itself down. The handling of
+  this message will then take place in library code, to avoid user code from
   simply ignoring the request. Since the messages are handled sequentially this
-  means that actors cannot be shut down when they are handeling another
-  messages. This has the advantage of avoiding actors being shutdown in crital
-  sections, but has the disadvantage of not being able to shutdown an actor that
+  means that actors cannot be shut down when they are handling other
+  messages. This has the advantage of avoiding actors being shutdown in critical
+  sections but has the disadvantage of not being able to shut down an actor that
   is stuck. This is the only practical way of shutting down an actor, since it
-  is not possible to stop a scheduled task. One way shutting down a running
-  actor \textit{could} be done, it to have each actor be its own seperate OS
-  thread, which you could then ask the OS to shutdown. The comes with the
+  is not possible to stop a scheduled task. One way of shutting down a running
+  actor \textit{could} be done, it to have each actor be its own separate OS
+  thread, which you could then ask the OS to shut down. The comes with the
   downside mentioned earlier, of not being able to take advantage of ``green
   threads''.
 \end{itemize}
 
 \section{Implementation}
-%
-% Immutability (we don't really use it)
-% Runtime choice
 We have chosen to base our implementation on the Tokio library. Tokio provides an
 asynchronous execution runtime, with support for \texttt{Task}s, which are
 light-weight non-blocking execution units. This is especially useful because we
 want the overhead of spawning actors to be low.
 
 Actors are concretely realized in our library as a Tokio \texttt{Task}, with the
-receiving end of its mailbox, which acts upon messages send to it.
+receiving end of its mailbox, which act upon messages sent to it.
 
 \begin{itemize}
 \item{\bf Mailboxes} \\
@@ -436,9 +381,9 @@ use the multi-producer, single-consumer (\texttt{mpsc}) kind. Such a channel
 consists of a unique \texttt{Receiver}-end and any number of \texttt{Sender}s.
 The actor owns the \texttt{Receiver} end and uses it to accept incoming
 messages, while the \texttt{Sender}s are abstracted over as mailboxes. Normally
-it is the responsibility of the library part of the behavior, to handle the
+it is the responsibility of the library part of the behaviour, to handle the
 actual reception of messages. Therefore, the receiver is normally exposed to the
-behavior implementer.
+behaviour implementer.
 % - Boundedness
 Tokio
 provides two kinds of \texttt{mpsc} channel, bounded and unbounded. Sending
@@ -471,7 +416,7 @@ acquired by cloning or being sent one, a named one can be acquired by resolving
 a name. A global registry is maintained, mapping names to mailboxes. Operations
 on a named mailbox only succeed if the name can be
 resolved. If the underlying channel of the named mailbox has been closed, upon
-trying to send a message via the mailbox, an attampt is made to re-resolve the name to a
+trying to send a message via the mailbox, an attempt is made to re-resolve the name to a
 mailbox of the same type. This re-resolution is done to allow for seamless
 communication with a globally named actor that might have been restarted.
 
@@ -498,7 +443,7 @@ dynamic mailbox into an unnamed one, this is not a big performance concern,
 since that should be a relatively one-off thing in any given scenario.
 
 \item{\bf Supervisors} \\
-Supervisor trees are specified using the \texttt{SupervisorSpec} and
+
 \texttt{ChildSpec} data-structures. \\ The \texttt{SupervisorSpec} contains the
 supervisor's restart strategy (one-for-one, one-for-all or rest-for-one) and a
 list of \texttt{ChildSpec}s. \texttt{ChildSpec}s contain the child's restart
@@ -543,7 +488,7 @@ specifications much more readable.
 
 The supervisor actor is implemented as an actor that handles
 requests for operations like listing children, starting new children and
-allowing other actors to be notified of child restarts and shutdowns (we call it
+allowing other actors to be notified of child restarts and shuts down (we call it
 monitoring). In addition to these external messages, supervisor actors also
 await notifications about the shutdown of their children via the
 \texttt{JoinHandle}. Whenever such a notification is received, it inspects
@@ -561,7 +506,7 @@ single receiver on its own end, while many of these tasks can send their join
 notifications to it.
 
 The supervisor also keeps track of a list of ``monitors'' for each child. When a
-child is shutdown or restarted, all (if any) of said child's monitors are
+child is shut down or restarted, all (if any) of said child's monitors are
 notified about this. When notifying about a restart, the child's new mailbox is
 also sent along. A monitor is simply the \texttt{Sender} end of an \texttt{mpsc}
 channel, over which \texttt{MonitorMessage}s are sent. Shutdown notifications
@@ -570,9 +515,6 @@ always closed after a shutdown message has been sent. Monitors are registered
 by sending the supervisor a monitor message using the \texttt{monitor} function,
 which consists of the local-id of the child to be monitored and the
 \texttt{Sender} to send the notification with.
-
-% TODO: Mention that there's no restart limiters
-%       (i.e. if X crashes in Y seconds, then crash)
 
 \item {\bf The request-handler behaviour} \\
   This behaviour is comparable to OTP's \texttt{gen\_server}, it allows for
@@ -610,18 +552,9 @@ which consists of the local-id of the child to be monitored and the
   should the request-handler even reply with? That would require further
   specification. While it is possible, and might even be preferable in some
   cases, this solution makes the fewest assumptions and is therefore the most
-  flexible. % TODO: Answer at most once semantics for replies via request-ids
+  flexible.
 
 \end{itemize}
-
-
-\begin{itemize}
-\item Talk about some concrete implementation decisions (and what drove them)
-\item Go into some (few) low-level technical details that might be interesting
-\item Tokio, lightweight multiprocessing, like erlang.
-\end{itemize}
-
-\newpage
 \section{Example}
 During our design and implementation process, we've used an example application
 to both guide and evaluate our design and implementation. The example is
@@ -844,7 +777,7 @@ doesn't require the user to follow a strict way of doing things (one might argue
 that in that case, it would be a framework, not a library). This means that the
 user is free to only partially use our library, for example together with a more
 traditional system, or they can structure their entire application using it if
-they like. The user can build their own actors- and behaivor-types if their
+they like. The user is able to build their own actors- and behaviour-types if their
 needs are not met by the ones in place. One specific thing that is currently not
 possible to do, due to our library design, is communicating ``up''
 the tree, further than your own supervisor. For example, there's no way, as an
@@ -866,8 +799,8 @@ that many things commonly done in the actor model are easy to express.
 
 \begin{itemize}
 \item {\bf Defining actors:} Defining
-actors usually requires implementing two interfaces, first the trait of the desired
-behavior to implement (defining how your actor behaves), as well as the
+actors usually requires implementing two interfaces, first the trait of desired
+behaviour to implement (defining how your actor behaves), as well as the
 \texttt{Actor} trait for starting your actor (allowing it to be started from a
 supervisor). A behaviour like \texttt{RequestHandler} abstracts away most of the
 details of running an actor, and leaves the user simply to specify how it acts
