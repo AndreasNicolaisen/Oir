@@ -5,6 +5,7 @@
 \usepackage{listings, listings-rust}
 \usepackage{graphicx}
 \usepackage{wrapfig}
+\usepackage{hyperref}
 
 \newcommand\figref[1]{Figure~\ref{#1}}
 
@@ -19,6 +20,7 @@
 \maketitle
 
 \section{Introduction}
+Some introduction with a reference\cite{SuturePost}
 
 \section{Background \& Analysis}
 %% \textit{What's OTP?}
@@ -77,6 +79,7 @@ independent actors. Generally, each actor has the following abilities:
 \item Each actor can spawn new actors.
 \end{itemize}
 
+\noindent
 The actors exist as seperate entities, and should not be able to affect each
 other, unless it is through messaging each other. Typically, a lot of actors are
 created, and each actor is tasked with handeling small tasks.\\
@@ -120,8 +123,8 @@ what is was currently doing. This is useful when organizing actors in
 \subsection{OTP}
 Developing application with Erlang is most often coupled with using OTP (Open
 Telecom Platform). OTP is a platform consisting of a compiler, libraries,
-middelwares, a database and some tools. What we will be most concerned with is
-supervision trees and behaviors.
+middelwares, a database and some tools\cite{ErlangOTPDocs}. What we will be most
+concerned with is supervision trees and behaviors.
 
 \subsubsection{Supervision trees}
 Supervision trees are a way to organize actors into supervisors and workers, in
@@ -134,7 +137,8 @@ it when it does. An example of a supervision tree can be seen in
   \centering
   \includegraphics[width=0.5\textwidth]{./resources/SupervisionTree.png}
   \caption{An example of a supervision tree, the square nodes are supervisors,
-    and the round nodes are workers} % TODO: source:  https://erlang.org/doc/design_principles/des_princ.html#supervision-trees
+    and the round nodes are workers.
+    \href{https://erlang.org/doc/design_principles/des_princ.html}{Source}.}
   \label{fig:supervision_tree}
 \end{figure}
 
@@ -217,7 +221,7 @@ In the design of our library, we have set the following goals:
 \item Strongly type the messages that the actors will pass to each other.
 \item Allow the user to write idiomatic actor model code, in a way that is also
   idiomatic to Rust.
-\item Enable to user to easily organize their actors in supervisor trees, both
+\item Enable to user to easily organize their actors in supervision trees, both
   in a declarative as well as dynamic fashion.
 \item Make it easy for the user to implement common patterns, without having to
   worry about how the actors interacts with the supervision tree.
@@ -814,5 +818,9 @@ tree-structure to the expected form.
 \end{itemize}
 
 \section{Conclusion}
+
+\newpage
+\bibliographystyle{plain}
+\bibliography{report}
 
 \end{document}
