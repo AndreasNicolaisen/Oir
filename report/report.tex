@@ -370,8 +370,7 @@ want the overhead of spawning actors to be low.
 Actors are concretely realized in our library as a Tokio \texttt{Task}, with the
 receiving end of its mailbox, which act upon messages sent to it.
 
-\begin{itemize}
-\item{\bf Mailboxes} \\
+\subsection{Mailboxes}
 Mailboxes are implemented as an abstraction on top of channels. Channels as a
 concept are both found in the Rust standard library, and in Tokio, and they are a
 mechanism for sending values between threads via a FIFO queue. Specifically, we
@@ -440,7 +439,7 @@ mailboxes is sending typed messages, which only can be done by converting the
 dynamic mailbox into an unnamed one, this is not a big performance concern,
 since that should be a relatively one-off thing in any given scenario.
 
-\item{\bf Supervisors} \\
+\subsection{Supervisors}
 Supervisor trees are specified using the \texttt{SupervisorSpec} and
 \texttt{ChildSpec} data-structures. \\ The \texttt{SupervisorSpec} contains the
 supervisor's restart strategy (one-for-one, one-for-all or rest-for-one) and a
@@ -520,7 +519,7 @@ OTP and ensures that supervisors don't get stuck in restart loops when the
 problem should be dealt with at a higher level. We have not implemented this due
 to time constraints.
 
-\item {\bf The request-handler behaviour} \\
+\subsection{The request-handler behaviour}
   This behaviour is comparable to OTP's \texttt{gen\_server}, it allows for
   defining actors that handle requests, allowing for an immediate- or delayed
   response. The user-defined part of the behaviour is facilitated by the
@@ -558,7 +557,6 @@ to time constraints.
   cases, this solution makes the fewest assumptions and is therefore the most
   flexible.
 
-\end{itemize}
 \section{Example Application}
 During our design and implementation process, we've used an example application
 to both guide and evaluate our design and implementation. The example is
