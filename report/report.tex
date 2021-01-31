@@ -134,7 +134,7 @@ it when it does. An example of a supervision tree can be seen in
   \centering
   \includegraphics[width=0.5\textwidth]{./resources/SupervisionTree.png}
   \caption{An example of a supervision tree, the square nodes are supervisors,
-    and the round nodes are workers} % TODO: source:  https://erlang.org/doc/design_principles/des_princ.html#supervision-trees 
+    and the round nodes are workers} % TODO: source:  https://erlang.org/doc/design_principles/des_princ.html#supervision-trees
   \label{fig:supervision_tree}
 \end{figure}
 
@@ -529,10 +529,15 @@ The supervisor also keeps track of a list of ``monitors'' for each child. When a
 child is shutdown or restarted, all (if any) of said child's monitors are
 notified about this. When notifying about a restart, the child's new mailbox is
 also sent along. A monitor is simply the \texttt{Sender} end of an \texttt{mpsc}
-channel, over which \texttt{MonitorMessage}s are sent. Monitors are registered
+channel, over which \texttt{MonitorMessage}s are sent. Shutdown notifications
+are only sent when a child shuts down and isn't restarted. The channel is
+always closed after a shutdown message has been sent. Monitors are registered
 by sending the supervisor a monitor message using the \texttt{monitor} function,
 which consists of the local-id of the child to be monitored and the
 \texttt{Sender} to send the notification with.
+
+% TODO: Mention that there's no restart limiters
+%       (i.e. if X crashes in Y seconds, then crash)
 
 \item {\bf The request-handler behaviour} \\
   This behaviour is comparable to OTP's \texttt{gen\_server}, it allows for
@@ -570,7 +575,7 @@ which consists of the local-id of the child to be monitored and the
   should the request-handler even reply with? That would require further
   specification. While it is possible, and might even be preferable in some
   cases, this solution makes the fewest assumptions and is therefore the most
-  flexible.
+  flexible. % TODO: Answer at most once semantics for replies via request-ids
 
 \end{itemize}
 
@@ -707,13 +712,105 @@ sum of those integers, but that is not very important for this example.
 
 
 \section{Evaluation}
+{\tt <intro>}
+
+A part of idiomatic Rust is for example, encoding constraints and communicating
+semantics using the type-system. For example using Rust's ownership and
+uniqueness semantics to enforce the uniqueness of a resource, and using enums
+like \texttt{Size::Large}/\texttt{Size::Small} instead of using a boolean
+argument \texttt{is\_large: bool}. We generally only impose only the strictly
+necessary constraints. We've tried to write our implementation such that as few
+type-constraints as possible are required from the user. In an earlier
+iteration --- due to some implementation details concerning storage of mailboxes
+--- we introduced a requirement for messages not only to be \texttt{Send}
+(meaning they're safe to transfer between threds), but also \texttt{Sync}
+(meaning that it is safe to share references of it between threads). We later
+discovered that we could do away with this constraint, which allows the user to
+for example to send data-structures with internal mutability. Other than in a few
+internal cases where a enum would be preferable to a boolean argument, the only
+obvious missed opertunity for encoding constraints in the type-system is the
+case of \texttt{RequestId}s. As detailed in the implementation section, the
+request-handler behaviour uses request-ids for identifiying requests that have
+deferred replies. Currently they're simply an opaque copy-type (i.e. just data),
+and it is therefore possible to attempt to reply with the same request-id
+multiple times. Since requests can at most have one reply, this can potentially
+cause a panic at runtime. We could enfore the reply-at-most-once nature of
+requests via the requst-id type, by making it an unclonable type and consuming
+it when it's used for a reply. Thereby we've made it impossible to reply twice
+to the same message\footnote{Technically it's still possible if we generate the
+  same request-id twice, but since we use random UUIDs, the chance of a
+  collision is {\bf very} small.}.
+
+Idiomatic Rust also highly values safety (this is one of Rust's design goals after
+all). But this is usually not as much of a concious choice for Rust code as in
+other system-languages, this is mainly due to the fact that Rust's safety
+(both memory- and thread-satefy) originates from its type-system and is exercised
+through its standard library. Because of this, in most cases if one's code
+doesn't use \texttt{unsafe} and compiles, it should be memory- and thread-safe
+(assuming the libraries used are safe). But in idiomatic Rust, if unsafe code is
+required, then it should be limitied to the places where it is strictly
+required, and a safe abstraction should be built on top of it. This is how large
+parts of Rust's standard library is implemented. The vast majority of our code
+does indeed not use unsafe code, and all our unsafe code is contained inside of
+our \texttt{AnyBox} abstraction.
+
+Rust's error model divides program errors in two categories, recoverable errors
+and unrecoverable errors. The former is realized via the type-system, often as
+\texttt{Result} types, which encodes both the value to be returned given a
+successful computation, as well as the error to be returned if something goes
+wrong. Then the user of that result then has to inspect which one it was and
+take appropiate action. The latter are realized as panics, which stops the
+current thread completely and tries to safely unwind the stack. Panicking is
+mainly used when some invariant has been broken or something outside the
+program's control has gone unrecoverably wrong (like running out of memory).
+What might be deemed a recoverable error might differ greatly from case to case:
+if I am a kernel module, then running out memory probably shouldn't bring the
+entire operating system down, instead I might wish to shutdown processes, or try
+to swap memory to disk, while if I am a simple command line tool, I am probably
+not going to deal with running out of memory. Therefore it often shouldn't be
+the library making the call of whether an error is recoverable or
+not, and should therefore most of the time default to returning result types.
+The exception to this is of-course if the error that has occoured is some
+library-internal invariant that has been violated. Our library implementation
+follows this way of handling errors, only panicking when internal invariants
+have been broken and otherwise exposing error-types to the user. User-code using
+our library on the other hand is a different story. Since our library intends to
+help built robust applications which can handle failure of actors via supervision
+trees, the tolerance for when to panic is lower in user-code, since recovery of
+panics is a core part of the supervisor-tree concept. This usually manifests
+itself as user-code not handling error cases for operations that are expected to
+succeed, and instead panicking. This for example can be seen in our example
+application, where assumptions about the supervision tree structure is a part of
+the pool-server's implementation, and any assumption invalidated will cause it
+to panic. This will in turn cause the pool-server and pool-supervisor (and
+thereby all the pool workers) to be restarted, with the goal of restoring the
+tree-structure to the expected form.
+
+% Evaluate how idiomatic the actor model part is
+
 \begin{itemize}
-\item What does idiomatic Rust look like? (2 parts, the implementation of OTP
-  and the usage of our library)
+
 \item How expressive is the library?
+% Expressivity in two parts: what CAN you say, how easy is it to say it?
+% - You can't express circularity of supervisors
+% - You can't go up!
+
+% - Non-local relative addressing in supervisor trees is verbose
+% - - Might encourage bad global naming
+
 \item How easy is it to implement common patterns, in terms of ergonomics (code
   length, complexity, etc)?
+  % Case against `adapter' patterns as they are
+  % - leaky abstraction, repeated pattern if you want to adapt for actor message
+  % - Possible solution: `adpator' traits (impl From<Reply<Stactor, i32>> for MyMessage ...)
+  %   - allows for generalization of categories of message types based on
+  %   `common language'
+  %   - Downside: loss of flexibility desribed in impl section
+
 \item How easy is it to understand written code?
+  % Supervisor tree a quite readable
+  % General message handling too
+  % Again adapters get in the way
 \end{itemize}
 
 \section{Conclusion}
