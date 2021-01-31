@@ -14,7 +14,10 @@ pub const POOL_SUP_NAME: &'static str = "pool_sup";
 
 struct PoolServActor {
     mailbox: Option<UnnamedMailbox<(oneshot::Sender<WorkResult>, PoolServMessage)>>,
-    workers: Vec<(LocalId, UnnamedMailbox<(oneshot::Sender<WorkerResp>, WorkItem)>)>,
+    workers: Vec<(
+        LocalId,
+        UnnamedMailbox<(oneshot::Sender<WorkerResp>, WorkItem)>,
+    )>,
     next: usize,
     supervisor: SupervisorMailbox,
     pool_sup: Option<SupervisorMailbox>,
@@ -56,13 +59,14 @@ impl Actor for PoolServActor {
         sup: Option<&crate::supervisor::SupervisorMailbox>,
         _: (),
     ) -> (UnnamedMailbox<Self::Message>, tokio::task::JoinHandle<()>) {
-        request_actor(PoolServActor::new(sup.expect("pool_serv needs a supervisor").clone()))
+        request_actor(PoolServActor::new(
+            sup.expect("pool_serv needs a supervisor").clone(),
+        ))
     }
 }
 
 #[async_trait]
 impl RequestHandler<PoolServMessage, WorkResult> for PoolServActor {
-
     async fn init(&mut self, mb: UnnamedMailbox<(oneshot::Sender<WorkResult>, PoolServMessage)>) {
         // Get the pool supervisor
         let mut pool_sup = which_children(&mut self.supervisor)
@@ -76,9 +80,13 @@ impl RequestHandler<PoolServMessage, WorkResult> for PoolServActor {
             .unwrap();
 
         for worker in which_children(&mut pool_sup).await.unwrap() {
-            let wmb = worker.mailbox.into_typed::<(oneshot::Sender<WorkerResp>, WorkItem)>().unwrap();
+            let wmb = worker
+                .mailbox
+                .into_typed::<(oneshot::Sender<WorkerResp>, WorkItem)>()
+                .unwrap();
 
-            let mut mon = monitor(&mut pool_sup, worker.local_id.clone()).await
+            let mut mon = monitor(&mut pool_sup, worker.local_id.clone())
+                .await
                 .unwrap()
                 .unwrap();
 
@@ -90,12 +98,26 @@ impl RequestHandler<PoolServMessage, WorkResult> for PoolServActor {
                         match mon.recv().await {
                             None | Some(MonitorMessage::Shutdown) => {
                                 let (ss, rs) = oneshot::channel();
-                                mb.send((ss, PoolServMessage::WorkerMonitor(li.clone(), MonitorMessage::Shutdown))).await;
+                                mb.send((
+                                    ss,
+                                    PoolServMessage::WorkerMonitor(
+                                        li.clone(),
+                                        MonitorMessage::Shutdown,
+                                    ),
+                                ))
+                                .await;
                                 break;
-                            },
+                            }
                             Some(MonitorMessage::Restarted(new_mb)) => {
                                 let (ss, rs) = oneshot::channel();
-                                mb.send((ss, PoolServMessage::WorkerMonitor(li.clone(), MonitorMessage::Restarted(new_mb)))).await;
+                                mb.send((
+                                    ss,
+                                    PoolServMessage::WorkerMonitor(
+                                        li.clone(),
+                                        MonitorMessage::Restarted(new_mb),
+                                    ),
+                                ))
+                                .await;
                             }
                         }
                     }
@@ -115,11 +137,15 @@ impl RequestHandler<PoolServMessage, WorkResult> for PoolServActor {
         request_id: RequestId,
         request: PoolServMessage,
     ) -> Result<Response<WorkResult>, ErrorBox> {
-
         match request {
             PoolServMessage::Start(work_item) => {
                 let (ss, rs) = oneshot::channel();
-                if self.workers[self.next].1.send((ss, work_item)).await.is_err() {
+                if self.workers[self.next]
+                    .1
+                    .send((ss, work_item))
+                    .await
+                    .is_err()
+                {
                     panic!("Doesn't send worker work item");
                 }
                 self.next = (self.next + 1) % self.workers.len();
@@ -133,17 +159,21 @@ impl RequestHandler<PoolServMessage, WorkResult> for PoolServActor {
                 });
 
                 Ok(Response::NoReply)
-            },
+            }
             PoolServMessage::Result(ri, result) => {
-                deferred_sender.send((ri, WorkResult::Completed(result))).await;
+                deferred_sender
+                    .send((ri, WorkResult::Completed(result)))
+                    .await;
 
                 Ok(Response::Reply(WorkResult::Ok))
-            },
+            }
             PoolServMessage::WorkerMonitor(li, status) => {
                 if let MonitorMessage::Restarted(new_mb) = status {
                     // Update the worker's mailbox
                     let worker = self.workers.iter_mut().find(|(l, _)| l == &li).unwrap();
-                    worker.1 = new_mb.into_typed::<(oneshot::Sender<WorkerResp>, WorkItem)>().unwrap();
+                    worker.1 = new_mb
+                        .into_typed::<(oneshot::Sender<WorkerResp>, WorkItem)>()
+                        .unwrap();
                 } else {
                     panic!("Worker pool disturbed");
                 }
@@ -193,28 +223,28 @@ fn pool(
                 RestartPolicy::Permanent,
                 RestartStrategy::OneForOne,
                 vec![child::<PoolWorkerActor>(RestartPolicy::Permanent, ()); num_workers],
-            ).named(POOL_SUP_NAME),
-            child::<PoolServActor>(RestartPolicy::Permanent, ())
-                .globally_named(POOL_SERV_NAME),
+            )
+            .named(POOL_SUP_NAME),
+            child::<PoolServActor>(RestartPolicy::Permanent, ()).globally_named(POOL_SERV_NAME),
         ],
     )
 }
 
 type PoolServReqMsg = (oneshot::Sender<WorkResult>, PoolServMessage);
 
-async fn start_work_async<M>(mb: &mut M, items: Vec<i32>)
-                             -> Option<oneshot::Receiver<WorkResult>>
-where M: Mailbox<PoolServReqMsg> {
-
+async fn start_work_async<M>(mb: &mut M, items: Vec<i32>) -> Option<oneshot::Receiver<WorkResult>>
+where
+    M: Mailbox<PoolServReqMsg>,
+{
     let (ss, rs) = oneshot::channel();
     mb.send((ss, PoolServMessage::Start(items))).await.ok()?;
     Some(rs)
 }
 
-async fn start_work<M>(mb : &mut M, items: Vec<i32>)
-                       -> Option<WorkResult>
-where M: Mailbox<PoolServReqMsg> {
-
+async fn start_work<M>(mb: &mut M, items: Vec<i32>) -> Option<WorkResult>
+where
+    M: Mailbox<PoolServReqMsg>,
+{
     let mut rs = start_work_async(mb, items).await?;
     rs.await.ok()
 }
@@ -226,8 +256,7 @@ mod test {
     #[tokio::test]
     async fn test_pool() {
         let (sup_rs, sup_h) = pool(5);
-        let mut mb =
-            NamedMailbox::<PoolServReqMsg>::new(POOL_SERV_NAME.to_owned());
+        let mut mb = NamedMailbox::<PoolServReqMsg>::new(POOL_SERV_NAME.to_owned());
 
         // Wait for the PoolServActor to be ready
         while mb.resolve().is_err() {
@@ -235,17 +264,24 @@ mod test {
         }
 
         // Test single work dispatch
-        assert!(matches!(start_work(&mut mb, (1..=100).collect::<Vec<_>>()).await.unwrap(),
-                         WorkResult::Completed(5050)));
+        assert!(matches!(
+            start_work(&mut mb, (1..=100).collect::<Vec<_>>())
+                .await
+                .unwrap(),
+            WorkResult::Completed(5050)
+        ));
 
         // Check fully saturating work dispatch:
         let mut incoming_results = Vec::new();
         for i in 0..50 {
             incoming_results.push(
-                start_work_async(&mut mb, (i*100..=(1+i)*100).collect::<Vec<_>>()).await.unwrap());
+                start_work_async(&mut mb, (i * 100..=(1 + i) * 100).collect::<Vec<_>>())
+                    .await
+                    .unwrap(),
+            );
         }
         for (i, inc) in incoming_results.into_iter().enumerate() {
-            let r = (i*100..=(1+i)*100).sum::<usize>() as i32;
+            let r = (i * 100..=(1 + i) * 100).sum::<usize>() as i32;
             assert_eq!(inc.await.unwrap(), WorkResult::Completed(r))
         }
     }

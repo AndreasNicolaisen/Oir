@@ -240,9 +240,7 @@ impl DynamicMailbox {
         self.sys.try_send(msg).is_ok()
     }
 
-    pub fn into_typed<T: Send + 'static>(
-        mut self,
-    ) -> Result<UnnamedMailbox<T>, DynamicMailbox> {
+    pub fn into_typed<T: Send + 'static>(mut self) -> Result<UnnamedMailbox<T>, DynamicMailbox> {
         let DynamicMailbox { sender, sys } = self;
         match sender.into_typed::<mpsc::Sender<T>>() {
             Ok(msg) => Ok(UnnamedMailbox::new(sys.clone(), msg)),
@@ -312,26 +310,22 @@ lazy_static! {
 }
 
 impl ActorDirectory {
-    fn resolve_name<T>(
-        &self,
-        name: &str,
-    ) -> Result<UnnamedMailbox<T>, ResolutionError>
+    fn resolve_name<T>(&self, name: &str) -> Result<UnnamedMailbox<T>, ResolutionError>
     where
         T: Send + 'static,
     {
         self.map
             .get(name)
             .map_or(Err(ResolutionError::NameNotFound), |res| {
-                res.clone().into_typed::<T>()
+                res.clone()
+                    .into_typed::<T>()
                     .map_or(Err(ResolutionError::WrongType), |senders| {
                         Ok(senders.clone())
                     })
             })
     }
 
-    fn resolve<T>(
-        name: &str,
-    ) -> Result<UnnamedMailbox<T>, ResolutionError>
+    fn resolve<T>(name: &str) -> Result<UnnamedMailbox<T>, ResolutionError>
     where
         T: Send + 'static,
     {
@@ -350,13 +344,9 @@ impl ActorDirectory {
 
     fn register<M>(name: String, mb: M)
     where
-        M: Into<DynamicMailbox>
+        M: Into<DynamicMailbox>,
     {
-        ACTOR_DIRECTORY
-            .write()
-            .unwrap()
-            .map
-            .insert(name, mb.into());
+        ACTOR_DIRECTORY.write().unwrap().map.insert(name, mb.into());
     }
 }
 

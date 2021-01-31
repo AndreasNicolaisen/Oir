@@ -163,11 +163,14 @@ pub enum MonitorRequestError {
 pub enum SupervisorRequest {
     WhichChildren(oneshot::Sender<Vec<Child>>),
     StartChild(oneshot::Sender<Child>, ChildSpec),
-    Monitor(oneshot::Sender<Option<MonitorRequestError>>, LocalId, Monitor),
+    Monitor(
+        oneshot::Sender<Option<MonitorRequestError>>,
+        LocalId,
+        Monitor,
+    ),
 }
 
 pub type SupervisorMailbox = UnnamedMailbox<SupervisorRequest>;
-
 
 #[derive(Clone)]
 pub enum MonitorMessage {
@@ -279,13 +282,20 @@ impl SupervisorState {
         let mut status = vec![false; self.children.len()];
 
         for (i, st) in status.iter_mut().enumerate() {
-            *st = self.children[i].mailbox.as_ref().map_or(true, |s| s.is_closed());
+            *st = self.children[i]
+                .mailbox
+                .as_ref()
+                .map_or(true, |s| s.is_closed());
         }
 
         while !status.iter().all(|x| *x) {
             match self.join_receiver.recv().await {
                 Some((li, jr)) => {
-                    let i = self.children.iter().position(|ch| ch.local_id == li).unwrap();
+                    let i = self
+                        .children
+                        .iter()
+                        .position(|ch| ch.local_id == li)
+                        .unwrap();
                     if status[i] {
                         self.joins_queue.push_back((li, jr));
                     } else {
@@ -338,7 +348,6 @@ impl SupervisorState {
                     .position(|cs| cs.local_id == li)
                     .unwrap();
 
-
                 match self.restart_strategy {
                     RestartStrategy::OneForOne => {
                         self.consider_restarting(child_idx, abnormal_crash).await;
@@ -347,7 +356,8 @@ impl SupervisorState {
                         self.shutdown_children().await;
 
                         for i in 0..self.children.len() {
-                            self.consider_restarting(i, i != child_idx || abnormal_crash).await;
+                            self.consider_restarting(i, i != child_idx || abnormal_crash)
+                                .await;
                         }
                     }
                     RestartStrategy::RestForOne => {
@@ -384,7 +394,8 @@ impl SupervisorState {
                         }
 
                         for j in i..self.children.len() {
-                            self.consider_restarting(j, j != child_idx || abnormal_crash).await;
+                            self.consider_restarting(j, j != child_idx || abnormal_crash)
+                                .await;
                         }
                     }
                 }
@@ -435,17 +446,15 @@ impl SupervisorState {
                     local_id: child.local_id.clone(),
                     registered_globally: child.spec.registered_globally,
                 });
-            },
+            }
             SupervisorRequest::Monitor(sender, li, monitor) => {
-                if let Some(child) = self.children
-                    .iter_mut()
-                    .find(|ch| ch.local_id == li) {
-                     if child.mailbox.is_none() {
-                         sender.send(Some(MonitorRequestError::ChildShutdown));
-                     } else {
-                         child.monitors.push(monitor);
-                         sender.send(None);
-                     }
+                if let Some(child) = self.children.iter_mut().find(|ch| ch.local_id == li) {
+                    if child.mailbox.is_none() {
+                        sender.send(Some(MonitorRequestError::ChildShutdown));
+                    } else {
+                        child.monitors.push(monitor);
+                        sender.send(None);
+                    }
                 } else {
                     sender.send(Some(MonitorRequestError::ChildNotFound));
                 }
@@ -533,7 +542,6 @@ pub async fn which_children(sup: &mut SupervisorMailbox) -> Option<Vec<Child>> {
     Some(r)
 }
 
-
 pub async fn start_child(sup: &mut SupervisorMailbox, cs: ChildSpec) -> Option<Child> {
     let (ss, rs) = oneshot::channel();
     sup.send(SupervisorRequest::StartChild(ss, cs)).await.ok()?;
@@ -541,10 +549,15 @@ pub async fn start_child(sup: &mut SupervisorMailbox, cs: ChildSpec) -> Option<C
     Some(r)
 }
 
-pub async fn monitor(sup: &mut SupervisorMailbox, li: LocalId) -> Option<Result<mpsc::Receiver<MonitorMessage>, MonitorRequestError>> {
+pub async fn monitor(
+    sup: &mut SupervisorMailbox,
+    li: LocalId,
+) -> Option<Result<mpsc::Receiver<MonitorMessage>, MonitorRequestError>> {
     let (ss, rs) = oneshot::channel();
     let (mons, monr) = mpsc::channel(512);
-    sup.send(SupervisorRequest::Monitor(ss, li, mons)).await.ok()?;
+    sup.send(SupervisorRequest::Monitor(ss, li, mons))
+        .await
+        .ok()?;
     let r = rs.await.ok()?;
     if let Some(err) = r {
         Some(Err(err))
@@ -935,7 +948,12 @@ mod tests {
     async fn supervisor_start_child_test() {
         let (mut rs, h) = supervise(RestartStrategy::OneForOne, vec![]);
 
-        let child = start_child(&mut rs, child::<Stactor<i32, i32>>(RestartPolicy::Transient, ())).await.unwrap();
+        let child = start_child(
+            &mut rs,
+            child::<Stactor<i32, i32>>(RestartPolicy::Transient, ()),
+        )
+        .await
+        .unwrap();
         let mut mb = child
             .mailbox
             .into_typed::<(oneshot::Sender<Option<i32>>, StoreRequest<i32, i32>)>()
@@ -958,10 +976,8 @@ mod tests {
             vec![
                 child::<Stactor<BadKey, i32>>(RestartPolicy::Transient, ())
                     .globally_named(n0.clone()),
-                child::<Stactor<BadKey, i64>>(RestartPolicy::Temporary, ())
-                    .named("1".to_string()),
-                child::<Stactor<BadKey, bool>>(RestartPolicy::Transient, ())
-                    .named("2".to_string()),
+                child::<Stactor<BadKey, i64>>(RestartPolicy::Temporary, ()).named("1".to_string()),
+                child::<Stactor<BadKey, bool>>(RestartPolicy::Transient, ()).named("2".to_string()),
             ],
         );
 
@@ -970,9 +986,18 @@ mod tests {
             tokio::task::yield_now().await;
         }
 
-        let mut mon0 = monitor(&mut sup, LocalId::Named(n0)).await.unwrap().unwrap();
-        let mut mon1 = monitor(&mut sup, LocalId::Named("1".to_string())).await.unwrap().unwrap();
-        let mut mon2 = monitor(&mut sup, LocalId::Named("2".to_string())).await.unwrap().unwrap();
+        let mut mon0 = monitor(&mut sup, LocalId::Named(n0))
+            .await
+            .unwrap()
+            .unwrap();
+        let mut mon1 = monitor(&mut sup, LocalId::Named("1".to_string()))
+            .await
+            .unwrap()
+            .unwrap();
+        let mut mon2 = monitor(&mut sup, LocalId::Named("2".to_string()))
+            .await
+            .unwrap()
+            .unwrap();
 
         let (rs, rr) = oneshot::channel::<Option<i32>>();
         mb.send((rs, StoreRequest::Set(BadKey::Bad, 0xffi32)))
@@ -980,10 +1005,16 @@ mod tests {
             .unwrap();
         rr.await;
 
-        assert!(matches!(mon0.recv().await, Some(MonitorMessage::Restarted(_))));
+        assert!(matches!(
+            mon0.recv().await,
+            Some(MonitorMessage::Restarted(_))
+        ));
         assert!(matches!(mon1.recv().await, Some(MonitorMessage::Shutdown)));
         assert!(matches!(mon1.recv().await, None));
-        assert!(matches!(mon2.recv().await, Some(MonitorMessage::Restarted(_))));
+        assert!(matches!(
+            mon2.recv().await,
+            Some(MonitorMessage::Restarted(_))
+        ));
 
         sup.send_system(SystemMessage::Shutdown).await;
         h.await;
